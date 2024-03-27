@@ -41,19 +41,16 @@ impl<D, T: OneshotOutputTransform<StoredData = D>> UnsubmittedOneshot<D, T> {
     }
 
     /// Link two UnsubmittedOneshots.
-    pub fn link<D2, T2: OneshotOutputTransform<StoredData = D2>>(
-        self,
-        other: UnsubmittedOneshot<D2, T2>,
-    ) -> Link<UnsubmittedOneshot<D, T>, UnsubmittedOneshot<D2, T2>> {
-        Link::new(self.set_flags(Flags::IO_LINK), other)
+    pub fn link(self, other: Link<UnsubmittedOneshot<D, T>>) -> Link<UnsubmittedOneshot<D, T>> {
+        Link::new(self.set_flags(Flags::IO_LINK), Some(Box::new(other)))
     }
 
     /// Hard-link two UnsubmittedOneshots.
-    pub fn hard_link<D2, T2: OneshotOutputTransform<StoredData = D2>>(
+    pub fn hard_link(
         self,
-        other: UnsubmittedOneshot<D2, T2>,
-    ) -> Link<UnsubmittedOneshot<D, T>, UnsubmittedOneshot<D2, T2>> {
-        Link::new(self.set_flags(Flags::IO_HARDLINK), other)
+        other: Link<UnsubmittedOneshot<D, T>>,
+    ) -> Link<UnsubmittedOneshot<D, T>> {
+        Link::new(self.set_flags(Flags::IO_HARDLINK), Some(Box::new(other)))
     }
 
     /// Set the SQE's flags.

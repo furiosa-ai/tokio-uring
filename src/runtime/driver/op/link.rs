@@ -9,84 +9,70 @@ use std::{
 use crate::{OneshotOutputTransform, Submit, UnsubmittedOneshot};
 
 /// A Link struct to represent linked operations.
-pub struct Link<D, N> {
+pub struct Link<D> {
     data: D,
-    next: N,
+    next: Option<Box<Link<D>>>,
 }
 
-impl<D, N> Link<D, N> {
+impl<D> Link<D> {
     /// Construct a new Link with actual data and next node (Link or UnsubmittedOneshot).
-    pub fn new(data: D, next: N) -> Self {
+    pub fn new(data: D, next: Option<Box<Link<D>>>) -> Self {
         Self { data, next }
     }
 }
 
-impl<D, N> Submit for Link<D, N>
+impl<D> Submit for Link<D>
 where
     D: Submit,
-    N: Submit,
 {
-    type Output = LinkedInFlightOneshot<D::Output, N::Output>;
+    type Output = LinkedInFlightOneshot<D::Output>;
 
     fn submit(self) -> Self::Output {
         LinkedInFlightOneshot {
             data: self.data.submit(),
-            next: Some(self.next.submit()),
+            next: self.next.map(|link| Box::new(link.submit())),
         }
     }
 }
 
-impl<D1, T1: OneshotOutputTransform<StoredData = D1>, N> Link<UnsubmittedOneshot<D1, T1>, N> {
+impl<D, T: OneshotOutputTransform<StoredData = D>> Link<UnsubmittedOneshot<D, T>> {
     /// Construct a new soft Link with current Link and other UnsubmittedOneshot.
-    pub fn link<D2, T2: OneshotOutputTransform<StoredData = D2>>(
-        self,
-        other: UnsubmittedOneshot<D2, T2>,
-    ) -> Link<UnsubmittedOneshot<D1, T1>, Link<N, UnsubmittedOneshot<D2, T2>>> {
+    pub fn link(self, other: Self) -> Link<UnsubmittedOneshot<D, T>> {
         Link {
             data: self.data.set_flags(Flags::IO_LINK),
-            next: Link {
-                data: self.next,
-                next: other,
-            },
+            next: Some(Box::new(other)),
         }
     }
 
     /// Construct a new hard Link with current Link and other UnsubmittedOneshot.
-    pub fn hard_link<D2, T2: OneshotOutputTransform<StoredData = D2>>(
-        self,
-        other: UnsubmittedOneshot<D2, T2>,
-    ) -> Link<UnsubmittedOneshot<D1, T1>, Link<N, UnsubmittedOneshot<D2, T2>>> {
+    pub fn hard_link(self, other: Self) -> Link<UnsubmittedOneshot<D, T>> {
         Link {
             data: self.data.set_flags(Flags::IO_HARDLINK),
-            next: Link {
-                data: self.next,
-                next: other,
-            },
+            next: Some(Box::new(other)),
         }
     }
 }
 
 pin_project! {
     /// An in-progress linked oneshot operations which can be polled for completion.
-    pub struct LinkedInFlightOneshot<D, N> {
+    pub struct LinkedInFlightOneshot<D> {
         #[pin]
         data: D,
-        next: Option<N>,
+        next: Option<Box<LinkedInFlightOneshot<D>>>,
     }
 }
 
-impl<D, N> Future for LinkedInFlightOneshot<D, N>
+impl<D> Future for LinkedInFlightOneshot<D>
 where
     D: Future,
 {
-    type Output = (D::Output, N); // Will return actual output and next linked future.
+    type Output = (D::Output, Option<Box<LinkedInFlightOneshot<D>>>); // Will return actual output and next linked future.
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
 
         let output = ready!(this.data.poll(cx));
-        let next = this.next.take().unwrap();
 
-        Poll::Ready((output, next))
+        Poll::Ready((output, this.next.take()))
     }
 }
