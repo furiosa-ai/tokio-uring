@@ -1,92 +1,85 @@
+use futures_util::{stream, Stream};
 use io_uring::squeue::Flags;
-use pin_project_lite::pin_project;
-use std::{
-    future::Future,
-    pin::Pin,
-    task::{Context, Poll},
-};
+use std::future::Future;
 
 use crate::{OneshotOutputTransform, Submit, UnsubmittedOneshot};
 
-/// A Link struct to represent linked operations.
-pub struct Link<D, N> {
-    data: D,
-    next: N,
+pub trait Linkable {
+    fn set_flags(self, flags: Flags) -> Self;
 }
 
-impl<D, N> Link<D, N> {
-    /// Construct a new Link with actual data and next node (Link or UnsubmittedOneshot).
-    pub fn new(data: D, next: N) -> Self {
-        Self { data, next }
+/// A Link struct to represent linked operations.
+pub struct Link<L> {
+    links: Vec<L>,
+}
+
+impl<D> Link<D> {
+    /// Ensure at least one or more data will be held by the struct
+    pub fn new(data: D) -> Self {
+        Self { links: vec![data] }
     }
 }
 
-impl<D, N> Submit for Link<D, N>
+impl<L> Link<L>
 where
-    D: Submit,
-    N: Submit,
+    L: Linkable,
 {
-    type Output = LinkedInFlightOneshot<D::Output, N::Output>;
+    pub fn link(&mut self, other: L) {
+        if let Some(data) = self.links.pop() {
+            self.links.push(data.set_flags(Flags::IO_LINK));
+        }
+        self.links.push(other);
+    }
+
+    pub fn hard_link(&mut self, other: L) {
+        if let Some(data) = self.links.pop() {
+            self.links.push(data.set_flags(Flags::IO_HARDLINK));
+        }
+        self.links.push(other);
+    }
+}
+
+impl<L, O> Submit for Link<L>
+where
+    L: Submit<Output = O>,
+{
+    type Output = Link<O>;
 
     fn submit(self) -> Self::Output {
-        LinkedInFlightOneshot {
-            data: self.data.submit(),
-            next: Some(self.next.submit()),
-        }
-    }
-}
-
-impl<D1, T1: OneshotOutputTransform<StoredData = D1>, N> Link<UnsubmittedOneshot<D1, T1>, N> {
-    /// Construct a new soft Link with current Link and other UnsubmittedOneshot.
-    pub fn link<D2, T2: OneshotOutputTransform<StoredData = D2>>(
-        self,
-        other: UnsubmittedOneshot<D2, T2>,
-    ) -> Link<UnsubmittedOneshot<D1, T1>, Link<N, UnsubmittedOneshot<D2, T2>>> {
         Link {
-            data: self.data.set_flags(Flags::IO_LINK),
-            next: Link {
-                data: self.next,
-                next: other,
-            },
-        }
-    }
-
-    /// Construct a new hard Link with current Link and other UnsubmittedOneshot.
-    pub fn hard_link<D2, T2: OneshotOutputTransform<StoredData = D2>>(
-        self,
-        other: UnsubmittedOneshot<D2, T2>,
-    ) -> Link<UnsubmittedOneshot<D1, T1>, Link<N, UnsubmittedOneshot<D2, T2>>> {
-        Link {
-            data: self.data.set_flags(Flags::IO_HARDLINK),
-            next: Link {
-                data: self.next,
-                next: other,
-            },
+            links: self
+                .links
+                .into_iter()
+                .map(|data| data.submit())
+                .collect::<Vec<_>>(),
         }
     }
 }
 
-pin_project! {
-    /// An in-progress linked oneshot operations which can be polled for completion.
-    pub struct LinkedInFlightOneshot<D, N> {
-        #[pin]
-        data: D,
-        next: Option<N>,
-    }
-}
-
-impl<D, N> Future for LinkedInFlightOneshot<D, N>
-where
-    D: Future,
+impl<D, T: OneshotOutputTransform<StoredData = D>> From<UnsubmittedOneshot<D, T>>
+    for Link<UnsubmittedOneshot<D, T>>
 {
-    type Output = (D::Output, N); // Will return actual output and next linked future.
+    fn from(value: UnsubmittedOneshot<D, T>) -> Self {
+        Self::new(value)
+    }
+}
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.project();
+impl<L> Link<L>
+where
+    L: Future,
+{
+    pub fn join_all(self) -> impl Future<Output = Vec<L::Output>> {
+        futures_util::future::join_all(self.links.into_iter())
+    }
 
-        let output = ready!(this.data.poll(cx));
-        let next = this.next.take().unwrap();
-
-        Poll::Ready((output, next))
+    pub fn into_stream(self) -> impl Stream<Item = L::Output> {
+        stream::unfold(self.links.into_iter(), |mut in_flights| async move {
+            if let Some(fut) = in_flights.next() {
+                let output = fut.await;
+                Some((output, in_flights))
+            } else {
+                None
+            }
+        })
     }
 }

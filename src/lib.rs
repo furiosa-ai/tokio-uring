@@ -82,8 +82,7 @@ pub mod net;
 pub use io::read::*;
 pub use io::write::*;
 pub use runtime::driver::op::{
-    InFlightOneshot, Link, LinkedInFlightOneshot, OneshotOutputTransform, Submit,
-    UnsubmittedOneshot,
+    InFlightOneshot, Link, OneshotOutputTransform, Submit, UnsubmittedOneshot,
 };
 pub use runtime::spawn;
 pub use runtime::Runtime;

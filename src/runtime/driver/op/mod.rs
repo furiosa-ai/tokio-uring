@@ -10,7 +10,7 @@ use io_uring::{cqueue, squeue};
 mod link;
 mod slab_list;
 
-pub use link::{Link, LinkedInFlightOneshot};
+pub use link::{Link, Linkable};
 use slab::Slab;
 use slab_list::{SlabListEntry, SlabListIndices};
 
@@ -39,28 +39,6 @@ impl<D, T: OneshotOutputTransform<StoredData = D>> UnsubmittedOneshot<D, T> {
             sqe,
         }
     }
-
-    /// Link two UnsubmittedOneshots.
-    pub fn link<D2, T2: OneshotOutputTransform<StoredData = D2>>(
-        self,
-        other: UnsubmittedOneshot<D2, T2>,
-    ) -> Link<UnsubmittedOneshot<D, T>, UnsubmittedOneshot<D2, T2>> {
-        Link::new(self.set_flags(Flags::IO_LINK), other)
-    }
-
-    /// Hard-link two UnsubmittedOneshots.
-    pub fn hard_link<D2, T2: OneshotOutputTransform<StoredData = D2>>(
-        self,
-        other: UnsubmittedOneshot<D2, T2>,
-    ) -> Link<UnsubmittedOneshot<D, T>, UnsubmittedOneshot<D2, T2>> {
-        Link::new(self.set_flags(Flags::IO_HARDLINK), other)
-    }
-
-    /// Set the SQE's flags.
-    pub(crate) fn set_flags(mut self, flags: Flags) -> Self {
-        self.sqe = self.sqe.flags(flags);
-        self
-    }
 }
 
 impl<D, T: OneshotOutputTransform<StoredData = D>> Submit for UnsubmittedOneshot<D, T> {
@@ -82,6 +60,13 @@ impl<D, T: OneshotOutputTransform<StoredData = D>> Submit for UnsubmittedOneshot
         };
 
         InFlightOneshot { inner: Some(inner) }
+    }
+}
+
+impl<D, T: OneshotOutputTransform<StoredData = D>> Linkable for UnsubmittedOneshot<D, T> {
+    fn set_flags(mut self, flags: Flags) -> Self {
+        self.sqe = self.sqe.flags(flags);
+        self
     }
 }
 
