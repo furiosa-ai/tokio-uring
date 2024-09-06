@@ -79,6 +79,7 @@ pub mod buf;
 pub mod fs;
 pub mod net;
 
+pub use io::futex::*;
 pub use io::read::*;
 pub use io::readv::*;
 pub use io::write::*;
