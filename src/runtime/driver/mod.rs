@@ -163,6 +163,13 @@ impl Driver {
             entries.push(sqe);
         }
 
+        assert!(
+            self.uring.submission().capacity() >= entries.len(),
+            "Submission queue does not have enough capacity: required {}, available {}",
+            entries.len(),
+            self.uring.submission().capacity()
+        );
+
         while unsafe { self.uring.submission().push_multiple(&entries).is_err() } {
             // If the submission queue is full, flush it to the kernel
             self.submit().expect("Internal error, failed to submit ops");
