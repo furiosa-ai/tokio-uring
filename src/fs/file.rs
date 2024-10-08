@@ -1,5 +1,6 @@
 use crate::buf::{BoundedBuf, BoundedBufMut, Buffer, Slice};
 use crate::fs::OpenOptions;
+use crate::io::cmd::UnsubmittedCmd;
 use crate::io::SharedFd;
 
 use crate::runtime::driver::op::Op;
@@ -9,6 +10,7 @@ use std::fmt;
 use std::io;
 use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd, RawFd};
 use std::path::Path;
+use std::pin::Pin;
 
 /// A reference to an open file on the filesystem.
 ///
@@ -619,6 +621,11 @@ impl File {
     /// ```
     pub async fn close(mut self) -> io::Result<()> {
         self.fd.close().await
+    }
+
+    #[allow(missing_docs)]
+    pub fn cmd<T>(&self, op: u32, cmd: [u8; 16], data: Pin<Box<T>>) -> UnsubmittedCmd<T> {
+        UnsubmittedCmd::cmd(&self.fd, op, cmd, data)
     }
 }
 
