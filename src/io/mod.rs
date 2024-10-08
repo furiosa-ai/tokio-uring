@@ -56,3 +56,5 @@ pub(crate) mod writev;
 
 mod writev_all;
 pub(crate) use writev_all::writev_at_all;
+
+pub(crate) mod cmd;
