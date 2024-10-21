@@ -88,24 +88,41 @@ impl Buffer {
     pub unsafe fn from_raw_parts(
         ptr: *mut u8,
         len: usize,
-        dtor: unsafe fn(libc::iovec, usize, *const ()),
         user_data: *const (),
+        dtor: unsafe fn(libc::iovec, usize, *const ()),
     ) -> Self {
         let iov = libc::iovec {
             iov_base: ptr as _,
             iov_len: len,
         };
-        let state = BufferState::new(len, dtor, user_data, BufferSource::RawPtr);
+        let state = BufferState::new(len, user_data, dtor, BufferSource::RawPtr);
         Self::new(vec![iov], vec![state])
+    }
+
+    #[allow(clippy::missing_safety_doc)]
+    #[allow(missing_docs)]
+    pub unsafe fn from_iovecs(
+        iovec: Vec<libc::iovec>,
+        user_data: *const (),
+        dtor: unsafe fn(libc::iovec, usize, *const ()),
+    ) -> Self {
+        let mut states = Vec::with_capacity(iovec.len());
+
+        for vec in iovec.iter() {
+            let state = BufferState::new(vec.iov_len, user_data, dtor, BufferSource::RawPtr);
+            states.push(state);
+        }
+
+        Self::new(iovec, states)
     }
 }
 
 #[derive(Debug)]
 pub(crate) struct BufferState {
     total_bytes: usize,
+    user_data: *const (),
     dtor: unsafe fn(libc::iovec, usize, *const ()),
     source: BufferSource,
-    user_data: *const (),
 }
 
 impl Drop for Buffer {
@@ -123,8 +140,8 @@ impl Drop for Buffer {
 impl BufferState {
     fn new(
         total_bytes: usize,
-        dtor: unsafe fn(libc::iovec, usize, *const ()),
         user_data: *const (),
+        dtor: unsafe fn(libc::iovec, usize, *const ()),
         source: BufferSource,
     ) -> Self {
         BufferState {
@@ -148,7 +165,7 @@ impl From<Vec<u8>> for Buffer {
             iov_len,
         };
 
-        let state = BufferState::new(total_bytes, drop_vec, ptr::null(), BufferSource::Vector);
+        let state = BufferState::new(total_bytes, ptr::null(), drop_vec, BufferSource::Vector);
         Buffer::new(vec![iov], vec![state])
     }
 }
@@ -170,7 +187,7 @@ impl From<Vec<Vec<u8>>> for Buffer {
                 iov_len,
             };
 
-            let state = BufferState::new(total_bytes, drop_vec, ptr::null(), BufferSource::Vector);
+            let state = BufferState::new(total_bytes, ptr::null(), drop_vec, BufferSource::Vector);
 
             iovecs.push(iov);
             states.push(state);
