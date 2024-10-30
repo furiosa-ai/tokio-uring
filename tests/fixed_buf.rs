@@ -1,8 +1,9 @@
 use tokio_test::assert_err;
-use tokio_uring::buf::fixed::{FixedBufPool, FixedBufRegistry};
+use tokio_uring::buf::fixed::{register, unregister, FixedBufPool, FixedBufRegistry};
 use tokio_uring::buf::{BoundedBuf, BoundedBufMut};
 use tokio_uring::fs::File;
 
+use std::convert::TryInto;
 use std::fs::File as StdFile;
 use std::io::prelude::*;
 use std::iter;
@@ -19,8 +20,13 @@ fn fixed_buf_turnaround() {
 
         let file = File::open(tempfile.path()).await.unwrap();
 
-        let buffers = FixedBufRegistry::new([30, 20, 10].iter().map(|&n| Vec::with_capacity(n)));
-        buffers.register().unwrap();
+        let buffers = register(
+            [30, 20, 10]
+                .iter()
+                .map(|&n| Vec::with_capacity(n))
+                .collect(),
+        )
+        .unwrap();
 
         let fixed_buf = buffers.check_out(0).unwrap();
         assert_eq!(fixed_buf.bytes_total(), 30);
@@ -66,25 +72,24 @@ fn unregister_invalidates_checked_out_buffers() {
 
         let file = File::open(tempfile.path()).await.unwrap();
 
-        let buffers = FixedBufRegistry::new([Vec::with_capacity(1024)]);
-        buffers.register().unwrap();
+        let buffers = register(vec![Vec::with_capacity(1024)]).unwrap();
 
         let fixed_buf = buffers.check_out(0).unwrap();
 
         // The checked out handle keeps the buffer allocation alive.
         // Meanwhile, we replace buffer registration in the kernel:
-        buffers.unregister().unwrap();
-        let buffers = FixedBufRegistry::new([Vec::with_capacity(1024)]);
-        buffers.register().unwrap();
+        unregister().unwrap();
+        let buffers = register(vec![Vec::with_capacity(1024)]).unwrap();
 
         // The old buffer's index no longer matches the memory area of the
         // currently registered buffer, so the read operation using the old
         // buffer's memory should fail.
         let res = file.read_fixed_at(fixed_buf, 0).await;
-        assert_err!(res);
+        assert!(res.is_err());
 
         let fixed_buf = buffers.check_out(0).unwrap();
         let (n, buf) = file.read_fixed_at(fixed_buf, 0).await.unwrap();
+        let buf: Vec<u8> = buf.try_into().unwrap();
         assert_eq!(n, HELLO.len());
         assert_eq!(&buf[..], HELLO);
     });
@@ -104,8 +109,7 @@ fn slicing() {
                 .unwrap(),
         );
 
-        let buffers = FixedBufRegistry::new([Vec::with_capacity(1024)]);
-        buffers.register().unwrap();
+        let buffers = register(vec![Vec::with_capacity(1024)]).unwrap();
 
         let fixed_buf = buffers.check_out(0).unwrap();
 

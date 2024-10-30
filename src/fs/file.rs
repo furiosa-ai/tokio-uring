@@ -1,4 +1,3 @@
-use crate::buf::fixed::FixedBuf;
 use crate::buf::{BoundedBuf, BoundedBufMut, Buffer, Slice};
 use crate::fs::OpenOptions;
 use crate::io::SharedFd;
@@ -322,7 +321,7 @@ impl File {
     /// ```
     pub async fn read_fixed_at<T>(&self, buf: T, pos: u64) -> crate::Result<usize, T>
     where
-        T: BoundedBufMut<BufMut = FixedBuf>,
+        T: BoundedBufMut<BufMut = Buffer>,
     {
         // Submit the read operation
         let op = Op::read_fixed_at(&self.fd, buf, pos).unwrap();
@@ -421,7 +420,7 @@ impl File {
     /// ```
     pub async fn write_fixed_at<T>(&self, buf: T, pos: u64) -> crate::Result<usize, T>
     where
-        T: BoundedBuf<Buf = FixedBuf>,
+        T: BoundedBuf<Buf = Buffer>,
     {
         let op = Op::write_fixed_at(&self.fd, buf, pos).unwrap();
         op.await
@@ -448,7 +447,7 @@ impl File {
     /// [`write_fixed_at`]: Self::write_fixed_at
     pub async fn write_fixed_all_at<T>(&self, buf: T, pos: u64) -> crate::Result<(), T>
     where
-        T: BoundedBuf<Buf = FixedBuf>,
+        T: BoundedBuf<Buf = Buffer>,
     {
         let orig_bounds = buf.bounds();
         self.write_fixed_all_at_slice(buf.slice_full(), pos)
@@ -458,9 +457,9 @@ impl File {
 
     async fn write_fixed_all_at_slice(
         &self,
-        mut buf: Slice<FixedBuf>,
+        mut buf: Slice<Buffer>,
         mut pos: u64,
-    ) -> crate::Result<(), FixedBuf> {
+    ) -> crate::Result<(), Buffer> {
         if pos.checked_add(buf.bytes_init() as u64).is_none() {
             return Err(crate::Error(
                 io::Error::new(io::ErrorKind::InvalidInput, "buffer too large for file"),

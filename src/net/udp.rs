@@ -326,10 +326,7 @@ impl UdpSocket {
     /// In addition to errors that can be reported by `read`,
     /// this operation fails if the buffer is not registered in the
     /// current `tokio-uring` runtime.
-    pub async fn read_fixed<T>(&self, buf: T) -> crate::Result<usize, T>
-    where
-        T: BoundedBufMut<BufMut = FixedBuf>,
-    {
+    pub async fn read_fixed(&self, buf: Buffer) -> crate::Result<usize, Buffer> {
         self.inner.read_fixed(buf).await
     }
 
@@ -353,10 +350,7 @@ impl UdpSocket {
     /// In addition to errors that can be reported by `write`,
     /// this operation fails if the buffer is not registered in the
     /// current `tokio-uring` runtime.
-    pub async fn write_fixed<T>(&self, buf: T) -> crate::Result<usize, T>
-    where
-        T: BoundedBuf<Buf = FixedBuf>,
-    {
+    pub async fn write_fixed(&self, buf: Buffer) -> crate::Result<usize, Buffer> {
         self.inner.write_fixed(buf).await
     }
 

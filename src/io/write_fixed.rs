@@ -1,9 +1,8 @@
-use crate::buf::fixed::FixedBuf;
 use crate::buf::BoundedBuf;
 use crate::io::SharedFd;
 use crate::runtime::driver::op::{self, Completable, Op};
-use crate::Result;
 use crate::WithBuffer;
+use crate::{Buffer, Result};
 
 use crate::runtime::CONTEXT;
 use std::io;
@@ -19,7 +18,7 @@ pub(crate) struct WriteFixed<T> {
 
 impl<T> Op<WriteFixed<T>>
 where
-    T: BoundedBuf<Buf = FixedBuf>,
+    T: BoundedBuf<Buf = Buffer>,
 {
     pub(crate) fn write_fixed_at(
         fd: &SharedFd,
@@ -38,6 +37,7 @@ where
                     // Get raw buffer info
                     let ptr = write_fixed.buf.stable_ptr();
                     let len = write_fixed.buf.bytes_init();
+                    debug_assert!(write_fixed.buf.get_buf().is_fixed());
                     let buf_index = write_fixed.buf.get_buf().buf_index();
                     opcode::WriteFixed::new(types::Fd(fd.raw_fd()), ptr, len as _, buf_index)
                         .offset(offset as _)

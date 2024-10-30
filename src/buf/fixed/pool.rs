@@ -11,7 +11,6 @@
 use super::plumbing;
 use super::FixedBuf;
 use crate::buf::IoBufMut;
-use crate::runtime::CONTEXT;
 
 use tokio::pin;
 use tokio::sync::Notify;
@@ -188,12 +187,13 @@ impl<T: IoBufMut> FixedBufPool<T> {
     /// of the `tokio-uring` runtime this call is made in, the function returns
     /// an error.
     pub fn register(&self) -> io::Result<()> {
-        CONTEXT.with(|x| {
-            x.handle()
-                .as_ref()
-                .expect("Not in a runtime context")
-                .register_buffers(Rc::clone(&self.inner) as _)
-        })
+        Ok(())
+        // CONTEXT.with(|x| {
+        //     x.handle()
+        //         .as_ref()
+        //         .expect("Not in a runtime context")
+        //         .register_buffers(Rc::clone(&self.inner) as _)
+        // })
     }
 
     /// Unregisters this collection of buffers.
@@ -212,12 +212,13 @@ impl<T: IoBufMut> FixedBufPool<T> {
     /// an error. Calling `unregister` when no `FixedBufPool` is currently
     /// registered on this runtime also returns an error.
     pub fn unregister(&self) -> io::Result<()> {
-        CONTEXT.with(|x| {
-            x.handle()
-                .as_ref()
-                .expect("Not in a runtime context")
-                .unregister_buffers(Rc::clone(&self.inner) as _)
-        })
+        Ok(())
+        // CONTEXT.with(|x| {
+        //     x.handle()
+        //         .as_ref()
+        //         .expect("Not in a runtime context")
+        //         .unregister_buffers(Rc::clone(&self.inner) as _)
+        // })
     }
 
     /// Returns a buffer of requested capacity from this pool

@@ -2,7 +2,6 @@ use crate::buf::Buffer;
 use crate::io::read_write::Unsubmitted;
 use crate::runtime::driver::op::{Op, Submit};
 use crate::{
-    buf::fixed::FixedBuf,
     buf::{BoundedBuf, BoundedBufMut, Slice},
     io::SharedFd,
     UnsubmittedOneshot,
@@ -50,7 +49,7 @@ impl Socket {
 
     pub(crate) async fn write_fixed<T>(&self, buf: T) -> crate::Result<usize, T>
     where
-        T: BoundedBuf<Buf = FixedBuf>,
+        T: BoundedBuf<Buf = Buffer>,
     {
         let op = Op::write_fixed_at(&self.fd, buf, 0).unwrap();
         op.await
@@ -58,7 +57,7 @@ impl Socket {
 
     pub(crate) async fn write_fixed_all<T>(&self, buf: T) -> crate::Result<(), T>
     where
-        T: BoundedBuf<Buf = FixedBuf>,
+        T: BoundedBuf<Buf = Buffer>,
     {
         let orig_bounds = buf.bounds();
         match self.write_fixed_all_slice(buf.slice_full()).await {
@@ -67,7 +66,7 @@ impl Socket {
         }
     }
 
-    async fn write_fixed_all_slice(&self, mut buf: Slice<FixedBuf>) -> crate::Result<(), FixedBuf> {
+    async fn write_fixed_all_slice(&self, mut buf: Slice<Buffer>) -> crate::Result<(), Buffer> {
         while buf.bytes_init() != 0 {
             let res = self.write_fixed(buf).await;
             match res {
@@ -135,7 +134,7 @@ impl Socket {
 
     pub(crate) async fn read_fixed<T>(&self, buf: T) -> crate::Result<usize, T>
     where
-        T: BoundedBufMut<BufMut = FixedBuf>,
+        T: BoundedBufMut<BufMut = Buffer>,
     {
         let op = Op::read_fixed_at(&self.fd, buf, 0).unwrap();
         op.await

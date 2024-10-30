@@ -1,9 +1,8 @@
-use crate::buf::fixed::FixedBuf;
 use crate::buf::BoundedBufMut;
 use crate::io::SharedFd;
 use crate::runtime::driver::op::{self, Completable, Op};
-use crate::Result;
 use crate::WithBuffer;
+use crate::{Buffer, Result};
 
 use crate::runtime::CONTEXT;
 use std::io;
@@ -20,7 +19,7 @@ pub(crate) struct ReadFixed<T> {
 
 impl<T> Op<ReadFixed<T>>
 where
-    T: BoundedBufMut<BufMut = FixedBuf>,
+    T: BoundedBufMut<BufMut = Buffer>,
 {
     pub(crate) fn read_fixed_at(
         fd: &SharedFd,
@@ -39,6 +38,7 @@ where
                     // Get raw buffer info
                     let ptr = read_fixed.buf.stable_mut_ptr();
                     let len = read_fixed.buf.bytes_total();
+                    debug_assert!(read_fixed.buf.get_buf().is_fixed());
                     let buf_index = read_fixed.buf.get_buf().buf_index();
                     opcode::ReadFixed::new(types::Fd(fd.raw_fd()), ptr, len as _, buf_index)
                         .offset(offset as _)
@@ -51,7 +51,7 @@ where
 
 impl<T> Completable for ReadFixed<T>
 where
-    T: BoundedBufMut<BufMut = FixedBuf>,
+    T: BoundedBufMut<BufMut = Buffer>,
 {
     type Output = Result<usize, T>;
 

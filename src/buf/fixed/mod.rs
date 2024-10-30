@@ -27,4 +27,4 @@ pub mod pool;
 pub use pool::FixedBufPool;
 
 mod registry;
-pub use registry::FixedBufRegistry;
+pub use registry::{register, unregister, FixedBufRegistry};
