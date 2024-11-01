@@ -1,6 +1,6 @@
 use libc::iovec;
 
-use crate::buf::{BoundedBufMut, Buffer};
+use crate::buf::{BoundedBufMut, Buffer, BufferSource};
 use crate::WithBuffer;
 use crate::{buf::BoundedBuf, io::SharedFd, OneshotOutputTransform, Result, UnsubmittedOneshot};
 use std::io;
@@ -58,9 +58,17 @@ impl Unsubmitted {
         let len = buf.bytes_init();
 
         let sqe = if buf.len() == 1 {
-            opcode::Write::new(types::Fd(fd.raw_fd()), ptr, len as _)
-                .offset(offset as _)
-                .build()
+            // Fixed buffer io not support vectored io
+            let source = buf.source().next().unwrap();
+            if let BufferSource::FixedBuf { buf_index } = source {
+                opcode::WriteFixed::new(types::Fd(fd.raw_fd()), ptr, len as _, *buf_index)
+                    .offset(offset as _)
+                    .build()
+            } else {
+                opcode::Write::new(types::Fd(fd.raw_fd()), ptr, len as _)
+                    .offset(offset as _)
+                    .build()
+            }
         } else {
             opcode::Writev::new(types::Fd(fd.raw_fd()), ptr as *const iovec, buf.len() as _)
                 .offset(offset as _)
@@ -87,9 +95,17 @@ impl Unsubmitted {
         buf.fill();
 
         let sqe = if buf.len() == 1 {
-            opcode::Read::new(types::Fd(fd.raw_fd()), ptr, len as _)
-                .offset(offset as _)
-                .build()
+            // Fixed buffer io not support vectored io
+            let source = buf.source().next().unwrap();
+            if let BufferSource::FixedBuf { buf_index } = source {
+                opcode::ReadFixed::new(types::Fd(fd.raw_fd()), ptr, len as _, *buf_index)
+                    .offset(offset as _)
+                    .build()
+            } else {
+                opcode::Read::new(types::Fd(fd.raw_fd()), ptr, len as _)
+                    .offset(offset as _)
+                    .build()
+            }
         } else {
             opcode::Readv::new(types::Fd(fd.raw_fd()), ptr as *mut iovec, buf.len() as _)
                 .offset(offset as _)

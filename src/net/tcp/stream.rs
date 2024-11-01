@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    buf::{fixed::FixedBuf, BoundedBuf, BoundedBufMut, Buffer},
+    buf::{BoundedBuf, Buffer},
     io::{SharedFd, Socket},
     Submit, Unsubmitted,
 };
@@ -90,10 +90,7 @@ impl TcpStream {
     /// In addition to errors that can be reported by `read`,
     /// this operation fails if the buffer is not registered in the
     /// current `tokio-uring` runtime.
-    pub async fn read_fixed<T>(&self, buf: T) -> crate::Result<usize, T>
-    where
-        T: BoundedBufMut<BufMut = FixedBuf>,
-    {
+    pub async fn read_fixed(&self, buf: Buffer) -> crate::Result<usize, Buffer> {
         self.inner.read_fixed(buf).await
     }
 
@@ -119,7 +116,7 @@ impl TcpStream {
     /// current `tokio-uring` runtime.
     pub async fn write_fixed<T>(&self, buf: T) -> crate::Result<usize, T>
     where
-        T: BoundedBuf<Buf = FixedBuf>,
+        T: BoundedBuf<Buf = Buffer>,
     {
         self.inner.write_fixed(buf).await
     }
@@ -139,7 +136,7 @@ impl TcpStream {
     /// [`write_fixed`]: Self::write_fixed
     pub async fn write_fixed_all<T>(&self, buf: T) -> crate::Result<(), T>
     where
-        T: BoundedBuf<Buf = FixedBuf>,
+        T: BoundedBuf<Buf = Buffer>,
     {
         self.inner.write_fixed_all(buf).await
     }

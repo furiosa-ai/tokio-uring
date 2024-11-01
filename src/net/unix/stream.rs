@@ -1,5 +1,5 @@
 use crate::{
-    buf::{fixed::FixedBuf, BoundedBuf, BoundedBufMut, Buffer},
+    buf::{BoundedBuf, BoundedBufMut, Buffer},
     io::{SharedFd, Socket},
     Submit, Unsubmitted,
 };
@@ -91,7 +91,7 @@ impl UnixStream {
     /// current `tokio-uring` runtime.
     pub async fn read_fixed<T>(&self, buf: T) -> crate::Result<usize, T>
     where
-        T: BoundedBufMut<BufMut = FixedBuf>,
+        T: BoundedBufMut<BufMut = Buffer>,
     {
         self.inner.read_fixed(buf).await
     }
@@ -115,7 +115,7 @@ impl UnixStream {
     /// current `tokio-uring` runtime.
     pub async fn write_fixed<T>(&self, buf: T) -> crate::Result<usize, T>
     where
-        T: BoundedBuf<Buf = FixedBuf>,
+        T: BoundedBuf<Buf = Buffer>,
     {
         self.inner.write_fixed(buf).await
     }
@@ -135,7 +135,7 @@ impl UnixStream {
     /// [`write_fixed`]: Self::write
     pub async fn write_fixed_all<T>(&self, buf: T) -> crate::Result<(), T>
     where
-        T: BoundedBuf<Buf = FixedBuf>,
+        T: BoundedBuf<Buf = Buffer>,
     {
         self.inner.write_fixed_all(buf).await
     }

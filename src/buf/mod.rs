@@ -40,10 +40,13 @@ pub(crate) fn deref_mut(buf: &mut impl IoBufMut) -> &mut [u8] {
     unsafe { std::slice::from_raw_parts_mut(buf.stable_mut_ptr(), buf.bytes_init()) }
 }
 
-#[derive(Debug, PartialEq)]
-enum BufferSource {
+// FIXME: Make public only for dtor function signature.
+#[allow(missing_docs)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum BufferSource {
     RawPtr,
-    Vector,
+    Vector { capacity: usize },
+    FixedBuf { buf_index: u16 },
 }
 
 #[allow(missing_docs)]
@@ -74,7 +77,9 @@ impl Buffer {
     #[allow(missing_docs)]
     pub fn fill(&mut self) {
         for (iovec, state) in zip(&mut self.iovecs, &self.state) {
-            iovec.iov_len = state.total_bytes;
+            if let BufferSource::Vector { capacity } = state.source {
+                iovec.iov_len = capacity;
+            }
         }
     }
 
@@ -89,13 +94,13 @@ impl Buffer {
         ptr: *mut u8,
         len: usize,
         user_data: *const (),
-        dtor: unsafe fn(libc::iovec, usize, *const ()),
+        dtor: unsafe fn(libc::iovec, BufferSource, *const ()),
     ) -> Self {
         let iov = libc::iovec {
             iov_base: ptr as _,
             iov_len: len,
         };
-        let state = BufferState::new(len, user_data, dtor, BufferSource::RawPtr);
+        let state = BufferState::new(user_data, dtor, BufferSource::RawPtr);
         Self::new(vec![iov], vec![state])
     }
 
@@ -104,25 +109,17 @@ impl Buffer {
     pub unsafe fn from_iovecs(
         iovec: Vec<libc::iovec>,
         user_data: *const (),
-        dtor: unsafe fn(libc::iovec, usize, *const ()),
+        dtor: unsafe fn(libc::iovec, BufferSource, *const ()),
     ) -> Self {
-        let mut states = Vec::with_capacity(iovec.len());
-
-        for vec in iovec.iter() {
-            let state = BufferState::new(vec.iov_len, user_data, dtor, BufferSource::RawPtr);
-            states.push(state);
-        }
-
+        let states = std::iter::repeat(BufferState::new(user_data, dtor, BufferSource::RawPtr))
+            .take(iovec.len())
+            .collect();
         Self::new(iovec, states)
     }
-}
 
-#[derive(Debug)]
-pub(crate) struct BufferState {
-    total_bytes: usize,
-    user_data: *const (),
-    dtor: unsafe fn(libc::iovec, usize, *const ()),
-    source: BufferSource,
+    pub(crate) fn source(&self) -> impl Iterator<Item = &BufferSource> {
+        self.state.iter().map(|state| &state.source)
+    }
 }
 
 impl Drop for Buffer {
@@ -132,20 +129,25 @@ impl Drop for Buffer {
             state,
         } = self;
         for i in 0..iovec.len() {
-            unsafe { (state[i].dtor)(iovec[i], state[i].total_bytes, state[i].user_data) }
+            unsafe { (state[i].dtor)(iovec[i], state[i].source, state[i].user_data) }
         }
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct BufferState {
+    user_data: *const (),
+    dtor: unsafe fn(libc::iovec, BufferSource, *const ()),
+    source: BufferSource,
+}
+
 impl BufferState {
     fn new(
-        total_bytes: usize,
         user_data: *const (),
-        dtor: unsafe fn(libc::iovec, usize, *const ()),
+        dtor: unsafe fn(libc::iovec, BufferSource, *const ()),
         source: BufferSource,
     ) -> Self {
         BufferState {
-            total_bytes,
             dtor,
             user_data,
             source,
@@ -165,7 +167,13 @@ impl From<Vec<u8>> for Buffer {
             iov_len,
         };
 
-        let state = BufferState::new(total_bytes, ptr::null(), drop_vec, BufferSource::Vector);
+        let state = BufferState::new(
+            ptr::null(),
+            drop_vec,
+            BufferSource::Vector {
+                capacity: total_bytes,
+            },
+        );
         Buffer::new(vec![iov], vec![state])
     }
 }
@@ -187,8 +195,13 @@ impl From<Vec<Vec<u8>>> for Buffer {
                 iov_len,
             };
 
-            let state = BufferState::new(total_bytes, ptr::null(), drop_vec, BufferSource::Vector);
-
+            let state = BufferState::new(
+                ptr::null(),
+                drop_vec,
+                BufferSource::Vector {
+                    capacity: total_bytes,
+                },
+            );
             iovecs.push(iov);
             states.push(state);
         }
@@ -211,7 +224,7 @@ impl TryFrom<Buffer> for Vec<u8> {
             ));
         }
 
-        if buf.state[0].source != BufferSource::Vector {
+        let BufferSource::Vector { capacity } = buf.state[0].source else {
             return Err(Error(
                 std::io::Error::new(
                     std::io::ErrorKind::Other,
@@ -219,14 +232,14 @@ impl TryFrom<Buffer> for Vec<u8> {
                 ),
                 buf,
             ));
-        }
+        };
 
         let this = ManuallyDrop::new(buf);
         Ok(unsafe {
             Vec::from_raw_parts(
                 this.iovecs[0].iov_base as _,
                 this.iovecs[0].iov_len,
-                this.state[0].total_bytes,
+                capacity,
             )
         })
     }
@@ -239,7 +252,7 @@ impl TryFrom<Buffer> for Vec<Vec<u8>> {
         if buf
             .state
             .iter()
-            .any(|state| state.source != BufferSource::Vector)
+            .any(|state| matches!(state.source, BufferSource::Vector { .. }))
         {
             return Err(Error(
                 std::io::Error::new(
@@ -253,11 +266,14 @@ impl TryFrom<Buffer> for Vec<Vec<u8>> {
         let this = ManuallyDrop::new(buf);
         let mut vecs = Vec::with_capacity(this.iovecs.len());
         for i in 0..this.iovecs.len() {
+            let BufferSource::Vector { capacity } = this.state[i].source else {
+                unreachable!("source of Buffer should be BufferSource::Vector")
+            };
             vecs.push(unsafe {
                 Vec::from_raw_parts(
                     this.iovecs[i].iov_base as _,
                     this.iovecs[i].iov_len,
-                    this.state[i].total_bytes,
+                    capacity,
                 )
             });
         }
@@ -265,8 +281,11 @@ impl TryFrom<Buffer> for Vec<Vec<u8>> {
     }
 }
 
-unsafe fn drop_vec(iovec: libc::iovec, total_bytes: usize, _user_data: *const ()) {
-    Vec::from_raw_parts(iovec.iov_base as _, iovec.iov_len, total_bytes);
+unsafe fn drop_vec(iovec: libc::iovec, source: BufferSource, _user_data: *const ()) {
+    let BufferSource::Vector { capacity } = source else {
+        unreachable!("source of Buffer should be BufferSource::Vector")
+    };
+    Vec::from_raw_parts(iovec.iov_base as _, iovec.iov_len, capacity);
 }
 
 impl Index<usize> for Buffer {
@@ -299,7 +318,17 @@ unsafe impl IoBuf for Buffer {
     }
 
     fn bytes_total(&self) -> usize {
-        self.state.iter().map(|state| state.total_bytes).sum()
+        self.state
+            .iter()
+            .zip(self.iovecs.iter())
+            .map(|(state, iovec)| {
+                if let BufferSource::Vector { capacity } = state.source {
+                    capacity
+                } else {
+                    iovec.iov_len
+                }
+            })
+            .sum()
     }
 }
 
@@ -314,7 +343,12 @@ unsafe impl IoBufMut for Buffer {
 
     unsafe fn set_init(&mut self, mut pos: usize) {
         for (iovec, state) in zip(&mut self.iovecs, &self.state) {
-            let size = std::cmp::min(state.total_bytes, pos);
+            let total_bytes = if let BufferSource::Vector { capacity } = state.source {
+                capacity
+            } else {
+                iovec.iov_len
+            };
+            let size = std::cmp::min(total_bytes, pos);
             iovec.iov_len = size;
             pos -= size;
         }

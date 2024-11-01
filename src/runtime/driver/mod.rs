@@ -1,11 +1,11 @@
-use crate::buf::fixed::FixedBuffers;
 use crate::runtime::driver::op::{Completable, Lifecycle, MultiCQEFuture, Op, Updateable};
+
 use io_uring::opcode::AsyncCancel;
 use io_uring::{cqueue, squeue, IoUring};
 use slab::Slab;
-use std::cell::RefCell;
+
 use std::os::unix::io::{AsRawFd, RawFd};
-use std::rc::Rc;
+
 use std::task::{Context, Poll};
 use std::{io, mem};
 
@@ -20,11 +20,6 @@ pub(crate) struct Driver {
 
     /// IoUring bindings
     uring: IoUring,
-
-    /// Reference to the currently registered buffers.
-    /// Ensures that the buffers are not dropped until
-    /// after the io-uring runtime has terminated.
-    fixed_buffers: Option<Rc<RefCell<dyn FixedBuffers>>>,
 }
 
 struct Ops {
@@ -43,7 +38,7 @@ impl Driver {
         Ok(Driver {
             ops: Ops::new(),
             uring,
-            fixed_buffers: None,
+            // fixed_buffers: None,
         })
     }
 
@@ -93,35 +88,12 @@ impl Driver {
         }
     }
 
-    pub(crate) fn register_buffers(
-        &mut self,
-        buffers: Rc<RefCell<dyn FixedBuffers>>,
-    ) -> io::Result<()> {
-        unsafe {
-            self.uring
-                .submitter()
-                .register_buffers(buffers.borrow().iovecs())
-        }?;
-
-        self.fixed_buffers = Some(buffers);
-        Ok(())
+    pub(crate) fn register_buffers(&self, buffers: &[libc::iovec]) -> io::Result<()> {
+        unsafe { self.uring.submitter().register_buffers(buffers) }
     }
 
-    pub(crate) fn unregister_buffers(
-        &mut self,
-        buffers: Rc<RefCell<dyn FixedBuffers>>,
-    ) -> io::Result<()> {
-        if let Some(currently_registered) = &self.fixed_buffers {
-            if Rc::ptr_eq(&buffers, currently_registered) {
-                self.uring.submitter().unregister_buffers()?;
-                self.fixed_buffers = None;
-                return Ok(());
-            }
-        }
-        Err(io::Error::new(
-            io::ErrorKind::Other,
-            "fixed buffers are not currently registered",
-        ))
+    pub(crate) fn unregister_buffers(&self) -> io::Result<()> {
+        self.uring.submitter().unregister_buffers()
     }
 
     pub(crate) fn register_files(&mut self, fds: &[RawFd]) -> io::Result<()> {

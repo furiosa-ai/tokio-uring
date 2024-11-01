@@ -3,13 +3,11 @@ use std::{
     os::unix::io::{AsRawFd, FromRawFd, RawFd},
 };
 
-use libc;
-
 use tempfile::NamedTempFile;
 
-use tokio_uring::buf::{BoundedBuf, BoundedBufMut};
+use tokio_uring::buf::{fixed::registry, BoundedBuf, BoundedBufMut};
 use tokio_uring::fs::File;
-use tokio_uring::{buf::fixed::FixedBufRegistry, Submit};
+use tokio_uring::Submit;
 
 #[path = "../src/future.rs"]
 #[allow(warnings)]
@@ -203,8 +201,9 @@ fn read_fixed() {
         let mut tempfile = tempfile();
         tempfile.write_all(HELLO).unwrap();
 
-        let buffers = FixedBufRegistry::new([Vec::with_capacity(6), Vec::with_capacity(1024)]);
-        buffers.register().unwrap();
+        let buffers =
+            registry::register(vec![Vec::with_capacity(6), Vec::with_capacity(1024)].into_iter())
+                .unwrap();
 
         let file = File::open(tempfile.path()).await.unwrap();
 
@@ -231,8 +230,9 @@ fn write_fixed() {
 
         let file = File::create(tempfile.path()).await.unwrap();
 
-        let buffers = FixedBufRegistry::new([Vec::with_capacity(6), Vec::with_capacity(1024)]);
-        buffers.register().unwrap();
+        let buffers =
+            registry::register(vec![Vec::with_capacity(6), Vec::with_capacity(1024)].into_iter())
+                .unwrap();
 
         let fixed_buf = buffers.check_out(0).unwrap();
         let mut buf = fixed_buf;
