@@ -7,7 +7,7 @@ use libc;
 
 use tempfile::NamedTempFile;
 
-use tokio_uring::buf::{fixed::register, BoundedBuf, BoundedBufMut};
+use tokio_uring::buf::{fixed::registry, BoundedBuf, BoundedBufMut};
 use tokio_uring::fs::File;
 use tokio_uring::Submit;
 
@@ -203,7 +203,9 @@ fn read_fixed() {
         let mut tempfile = tempfile();
         tempfile.write_all(HELLO).unwrap();
 
-        let buffers = register(vec![Vec::with_capacity(6), Vec::with_capacity(1024)]).unwrap();
+        let buffers =
+            registry::register(vec![Vec::with_capacity(6), Vec::with_capacity(1024)].into_iter())
+                .unwrap();
 
         let file = File::open(tempfile.path()).await.unwrap();
 
@@ -230,7 +232,9 @@ fn write_fixed() {
 
         let file = File::create(tempfile.path()).await.unwrap();
 
-        let buffers = register(vec![Vec::with_capacity(6), Vec::with_capacity(1024)]).unwrap();
+        let buffers =
+            registry::register(vec![Vec::with_capacity(6), Vec::with_capacity(1024)].into_iter())
+                .unwrap();
 
         let fixed_buf = buffers.check_out(0).unwrap();
         let mut buf = fixed_buf;

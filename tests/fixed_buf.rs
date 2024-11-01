@@ -1,5 +1,4 @@
-use tokio_test::assert_err;
-use tokio_uring::buf::fixed::{register, unregister, FixedBufPool, FixedBufRegistry};
+use tokio_uring::buf::fixed::{pool, registry};
 use tokio_uring::buf::{BoundedBuf, BoundedBufMut};
 use tokio_uring::fs::File;
 
@@ -20,13 +19,8 @@ fn fixed_buf_turnaround() {
 
         let file = File::open(tempfile.path()).await.unwrap();
 
-        let buffers = register(
-            [30, 20, 10]
-                .iter()
-                .map(|&n| Vec::with_capacity(n))
-                .collect(),
-        )
-        .unwrap();
+        let buffers =
+            registry::register([30, 20, 10].iter().map(|&n| Vec::with_capacity(n))).unwrap();
 
         let fixed_buf = buffers.check_out(0).unwrap();
         assert_eq!(fixed_buf.bytes_total(), 30);
@@ -72,14 +66,14 @@ fn unregister_invalidates_checked_out_buffers() {
 
         let file = File::open(tempfile.path()).await.unwrap();
 
-        let buffers = register(vec![Vec::with_capacity(1024)]).unwrap();
+        let buffers = registry::register(vec![Vec::with_capacity(1024)].into_iter()).unwrap();
 
         let fixed_buf = buffers.check_out(0).unwrap();
 
         // The checked out handle keeps the buffer allocation alive.
         // Meanwhile, we replace buffer registration in the kernel:
-        unregister().unwrap();
-        let buffers = register(vec![Vec::with_capacity(1024)]).unwrap();
+        registry::unregister().unwrap();
+        let buffers = registry::register(vec![Vec::with_capacity(1024)].into_iter()).unwrap();
 
         // The old buffer's index no longer matches the memory area of the
         // currently registered buffer, so the read operation using the old
@@ -109,7 +103,7 @@ fn slicing() {
                 .unwrap(),
         );
 
-        let buffers = register(vec![Vec::with_capacity(1024)]).unwrap();
+        let buffers = registry::register(vec![Vec::with_capacity(1024)].into_iter()).unwrap();
 
         let fixed_buf = buffers.check_out(0).unwrap();
 
@@ -150,8 +144,8 @@ fn pool_next_as_concurrency_limit() {
             .open(tempfile.path())
             .unwrap();
 
-        let buffers = FixedBufPool::new(iter::repeat_with(|| Vec::with_capacity(BUF_SIZE)).take(2));
-        buffers.register().unwrap();
+        let buffers =
+            pool::register(iter::repeat_with(|| Vec::with_capacity(BUF_SIZE)).take(2)).unwrap();
 
         let mut join_handles = vec![];
         for i in 0..10 {

@@ -118,12 +118,12 @@ impl Buffer {
     }
 
     #[allow(missing_docs)]
-    pub(crate) fn is_fixed(&self) -> bool {
+    pub fn is_fixed(&self) -> bool {
         self.len() == 1 && matches!(self.state[0].source, BufferSource::FixedBuf { .. })
     }
 
     #[allow(missing_docs)]
-    pub(crate) fn buf_index(&self) -> u16 {
+    pub fn buf_index(&self) -> u16 {
         assert!(self.is_fixed());
         let BufferSource::FixedBuf { buf_index } = self.state[0].source else {
             unreachable!()

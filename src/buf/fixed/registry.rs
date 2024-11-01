@@ -1,3 +1,11 @@
+//! A dynamic collection of I/O buffers pre-registered with the kernel.
+//!
+//! This module provides [`FixedBufRegister`], a collection that implements
+//! dynamic management of sets of interchangeable memory buffers
+//! registered with the kernel for `io-uring` operations.
+//!
+//! [`FixedBufRegister`]: self::FixedBufRegister
+
 use super::plumbing;
 
 use crate::buf::BufferSource;
@@ -27,7 +35,7 @@ use std::sync::{Arc, Mutex};
 /// [`register`]: register
 /// [`check_out`]: Self::check_out
 /// [`Runtime`]: crate::Runtime
-/// ['Buffer']: crate::buf::Buffer
+/// ['Buffer']: crate::Buffer
 #[derive(Clone)]
 pub struct FixedBufRegistry {
     inner: Arc<Mutex<plumbing::Registry>>,
@@ -103,7 +111,7 @@ impl FixedBufRegistry {
 /// [`iter::repeat`]: std::iter::repeat
 ///
 /// ```should_panic
-/// use tokio_uring::buf::fixed::FixedBufRegistry;
+/// use tokio_uring::buf::fixed::registry;
 /// use std::iter;
 ///
 /// # #[allow(non_snake_case)]
@@ -114,7 +122,7 @@ impl FixedBufRegistry {
 /// # let BUF_SIZE = 4096;
 ///
 /// tokio_uring::start(async {
-///     let registry = register(iter::repeat(Vec::with_capacity(BUF_SIZE)).take(NUM_BUFFERS).collect())?;
+///     let registry = registry::register(iter::repeat(Vec::with_capacity(BUF_SIZE)).take(NUM_BUFFERS).collect())?;
 ///     // ...
 ///     Ok(())
 /// })
@@ -124,7 +132,7 @@ impl FixedBufRegistry {
 /// Instead, create the vectors with requested capacity directly:
 ///
 /// ```
-/// use tokio_uring::buf::fixed::FixedBufRegistry;
+/// use tokio_uring::buf::fixed::registry;
 /// use std::iter;
 ///
 /// # #[allow(non_snake_case)]
@@ -135,7 +143,7 @@ impl FixedBufRegistry {
 /// # let BUF_SIZE = 4096;
 ///
 /// tokio_uring::start(async {
-///     let registry = register(iter::repeat_with(|| Vec::with_capacity(BUF_SIZE)).take(NUM_BUFFERS).collect())?;
+///     let registry = registry::register(iter::repeat_with(|| Vec::with_capacity(BUF_SIZE)).take(NUM_BUFFERS).collect())?;
 ///     // ...
 ///     Ok(())
 /// })
@@ -147,13 +155,8 @@ impl FixedBufRegistry {
 /// If a collection of buffers is currently registered in the context
 /// of the `tokio-uring` runtime this call is made in, the function returns
 /// an error.
-pub fn register(buffers: Vec<Vec<u8>>) -> io::Result<FixedBufRegistry> {
-    // Limit the number of buffers to the maximum allowable number.
-    let buffers = buffers
-        .into_iter()
-        .take(std::cmp::min(libc::UIO_MAXIOV as usize, u16::MAX as usize))
-        .collect();
-    let registry_inner = plumbing::Registry::new(buffers);
+pub fn register(bufs: impl Iterator<Item = Vec<u8>>) -> io::Result<FixedBufRegistry> {
+    let registry_inner = plumbing::Registry::new(bufs);
     CONTEXT.with(|x| {
         x.handle()
             .as_ref()

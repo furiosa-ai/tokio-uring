@@ -1,5 +1,5 @@
 use crate::{
-    buf::{fixed::FixedBuf, BoundedBuf, BoundedBufMut, Buffer},
+    buf::{BoundedBuf, BoundedBufMut, Buffer},
     io::{SharedFd, Socket},
     Unsubmitted,
 };

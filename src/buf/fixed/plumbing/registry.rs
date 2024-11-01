@@ -1,4 +1,4 @@
-use std::mem::ManuallyDrop;
+use std::{cmp, mem::ManuallyDrop};
 
 // Internal state shared by FixedBufRegistry and Buffers.
 pub(crate) struct Registry {
@@ -28,7 +28,14 @@ enum BufState {
 }
 
 impl Registry {
-    pub(crate) fn new(buffers: Vec<Vec<u8>>) -> Self {
+    pub(crate) fn new(bufs: impl Iterator<Item = Vec<u8>>) -> Self {
+        // Limit the number of buffers to the maximum allowable number.
+        let bufs = bufs.take(cmp::min(libc::UIO_MAXIOV as usize, u16::MAX as usize));
+        // Collect into `buffers`, which holds the backing buffers for
+        // the lifetime of the pool. Using collect may allow
+        // the compiler to apply collect in place specialization,
+        // to avoid an allocation.
+        let buffers = bufs.collect::<Vec<_>>();
         let mut iovecs = Vec::with_capacity(buffers.len());
         let mut origin_caps = Vec::with_capacity(buffers.len());
         let mut states = Vec::with_capacity(buffers.len());
@@ -45,6 +52,9 @@ impl Registry {
                 init_len: buffer.len(),
             });
         }
+        debug_assert_eq!(iovecs.len(), states.len());
+        debug_assert_eq!(iovecs.len(), origin_caps.len());
+
         Self {
             iovecs,
             origin_caps,

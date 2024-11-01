@@ -14,17 +14,8 @@
 //!
 //! [rfa]: crate::fs::File::read_fixed_at
 //! [wfa]: crate::fs::File::write_fixed_at
-
-mod handle;
-pub use handle::FixedBuf;
-
-mod buffers;
-pub(crate) use buffers::FixedBuffers;
-
 mod plumbing;
 
 pub mod pool;
-pub use pool::FixedBufPool;
 
-mod registry;
-pub use registry::{register, unregister, FixedBufRegistry};
+pub mod registry;

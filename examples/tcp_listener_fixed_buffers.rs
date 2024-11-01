@@ -5,7 +5,7 @@ use std::{env, iter, net::SocketAddr};
 
 use tokio_uring::{
     buf::{
-        fixed::{register, FixedBufRegistry},
+        fixed::registry::{self, FixedBufRegistry},
         BoundedBuf,
     },
     net::{TcpListener, TcpStream},
@@ -37,11 +37,11 @@ async fn accept_loop(listen_addr: SocketAddr) {
     );
 
     // Other iterators may be passed to FixedBufRegistry::new also.
-    let buffers = iter::repeat(vec![0; 4096]).take(POOL_SIZE).collect();
+    let buffers = iter::repeat(vec![0; 4096]).take(POOL_SIZE);
 
     // Register the buffers with the kernel, asserting the syscall passed.
 
-    let registry = register(buffers).unwrap();
+    let registry = registry::register(buffers).unwrap();
 
     loop {
         let (stream, peer) = listener.accept().await.unwrap();
