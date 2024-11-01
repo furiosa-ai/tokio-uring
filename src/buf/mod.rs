@@ -49,21 +49,6 @@ pub enum BufferSource {
     FixedBuf { buf_index: u16 },
 }
 
-impl BufferSource {
-    #[allow(missing_docs)]
-    pub fn is_fixed(&self) -> bool {
-        matches!(self, BufferSource::FixedBuf { .. })
-    }
-
-    #[allow(missing_docs)]
-    pub fn buf_index(&self) -> u16 {
-        let BufferSource::FixedBuf { buf_index } = self else {
-            panic!("the source of buffer must be FixedBuf")
-        };
-        *buf_index
-    }
-}
-
 #[allow(missing_docs)]
 pub struct Buffer {
     iovecs: Vec<libc::iovec>,
@@ -132,11 +117,8 @@ impl Buffer {
         Self::new(iovec, states)
     }
 
-    // This method is used internally only for fixed buffer check purposes.
-    // Fixed buffer must always have length 1.
-    pub(crate) fn source(&self) -> &BufferSource {
-        assert_eq!(self.len(), 1);
-        &self.state[0].source
+    pub(crate) fn source(&self) -> impl Iterator<Item = &BufferSource> {
+        self.state.iter().map(|state| &state.source)
     }
 }
 

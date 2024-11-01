@@ -1,4 +1,4 @@
-use crate::buf::BoundedBufMut;
+use crate::buf::{BoundedBufMut, BufferSource};
 use crate::io::SharedFd;
 use crate::runtime::driver::op::{self, Completable, Op};
 use crate::WithBuffer;
@@ -38,9 +38,11 @@ where
                     // Get raw buffer info
                     let ptr = read_fixed.buf.stable_mut_ptr();
                     let len = read_fixed.buf.bytes_total();
-                    debug_assert!(read_fixed.buf.get_buf().source().is_fixed());
-                    let buf_index = read_fixed.buf.get_buf().source().buf_index();
-                    opcode::ReadFixed::new(types::Fd(fd.raw_fd()), ptr, len as _, buf_index)
+                    let source = read_fixed.buf.get_buf().source().next().unwrap();
+                    let BufferSource::FixedBuf { buf_index } = source else {
+                        unreachable!("the source of buffer must be FixedBuf")
+                    };
+                    opcode::ReadFixed::new(types::Fd(fd.raw_fd()), ptr, len as _, *buf_index)
                         .offset(offset as _)
                         .build()
                 },

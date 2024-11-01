@@ -1,6 +1,6 @@
 use libc::iovec;
 
-use crate::buf::{BoundedBufMut, Buffer};
+use crate::buf::{BoundedBufMut, Buffer, BufferSource};
 use crate::WithBuffer;
 use crate::{buf::BoundedBuf, io::SharedFd, OneshotOutputTransform, Result, UnsubmittedOneshot};
 use std::io;
@@ -59,9 +59,9 @@ impl Unsubmitted {
 
         let sqe = if buf.len() == 1 {
             // Fixed buffer io not support vectored io
-            if buf.source().is_fixed() {
-                let index = buf.source().buf_index();
-                opcode::WriteFixed::new(types::Fd(fd.raw_fd()), ptr, len as _, index)
+            let source = buf.source().next().unwrap();
+            if let BufferSource::FixedBuf { buf_index } = source {
+                opcode::WriteFixed::new(types::Fd(fd.raw_fd()), ptr, len as _, *buf_index)
                     .offset(offset as _)
                     .build()
             } else {
@@ -96,9 +96,9 @@ impl Unsubmitted {
 
         let sqe = if buf.len() == 1 {
             // Fixed buffer io not support vectored io
-            if buf.source().is_fixed() {
-                let index = buf.source().buf_index();
-                opcode::ReadFixed::new(types::Fd(fd.raw_fd()), ptr, len as _, index)
+            let source = buf.source().next().unwrap();
+            if let BufferSource::FixedBuf { buf_index } = source {
+                opcode::ReadFixed::new(types::Fd(fd.raw_fd()), ptr, len as _, *buf_index)
                     .offset(offset as _)
                     .build()
             } else {
