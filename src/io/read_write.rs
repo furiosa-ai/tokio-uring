@@ -59,8 +59,8 @@ impl Unsubmitted {
 
         let sqe = if buf.len() == 1 {
             // Fixed buffer io not support vectored io
-            if buf.is_fixed() {
-                let index = buf.buf_index();
+            if buf.source().is_fixed() {
+                let index = buf.source().buf_index();
                 opcode::WriteFixed::new(types::Fd(fd.raw_fd()), ptr, len as _, index)
                     .offset(offset as _)
                     .build()
@@ -96,8 +96,8 @@ impl Unsubmitted {
 
         let sqe = if buf.len() == 1 {
             // Fixed buffer io not support vectored io
-            if buf.is_fixed() {
-                let index = buf.buf_index();
+            if buf.source().is_fixed() {
+                let index = buf.source().buf_index();
                 opcode::ReadFixed::new(types::Fd(fd.raw_fd()), ptr, len as _, index)
                     .offset(offset as _)
                     .build()

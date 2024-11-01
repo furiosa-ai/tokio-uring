@@ -37,8 +37,8 @@ where
                     // Get raw buffer info
                     let ptr = write_fixed.buf.stable_ptr();
                     let len = write_fixed.buf.bytes_init();
-                    debug_assert!(write_fixed.buf.get_buf().is_fixed());
-                    let buf_index = write_fixed.buf.get_buf().buf_index();
+                    debug_assert!(write_fixed.buf.get_buf().source().is_fixed());
+                    let buf_index = write_fixed.buf.get_buf().source().buf_index();
                     opcode::WriteFixed::new(types::Fd(fd.raw_fd()), ptr, len as _, buf_index)
                         .offset(offset as _)
                         .build()

@@ -49,6 +49,21 @@ pub enum BufferSource {
     FixedBuf { buf_index: u16 },
 }
 
+impl BufferSource {
+    #[allow(missing_docs)]
+    pub fn is_fixed(&self) -> bool {
+        matches!(self, BufferSource::FixedBuf { .. })
+    }
+
+    #[allow(missing_docs)]
+    pub fn buf_index(&self) -> u16 {
+        let BufferSource::FixedBuf { buf_index } = self else {
+            panic!("the source of buffer must be FixedBuf")
+        };
+        *buf_index
+    }
+}
+
 #[allow(missing_docs)]
 pub struct Buffer {
     iovecs: Vec<libc::iovec>,
@@ -117,26 +132,12 @@ impl Buffer {
         Self::new(iovec, states)
     }
 
-    #[allow(missing_docs)]
-    pub fn is_fixed(&self) -> bool {
-        self.len() == 1 && matches!(self.state[0].source, BufferSource::FixedBuf { .. })
+    // This method is used internally only for fixed buffer check purposes.
+    // Fixed buffer must always have length 1.
+    pub(crate) fn source(&self) -> &BufferSource {
+        assert_eq!(self.len(), 1);
+        &self.state[0].source
     }
-
-    #[allow(missing_docs)]
-    pub fn buf_index(&self) -> u16 {
-        assert!(self.is_fixed());
-        let BufferSource::FixedBuf { buf_index } = self.state[0].source else {
-            unreachable!()
-        };
-        buf_index
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct BufferState {
-    user_data: *const (),
-    dtor: unsafe fn(libc::iovec, BufferSource, *const ()),
-    source: BufferSource,
 }
 
 impl Drop for Buffer {
@@ -149,6 +150,13 @@ impl Drop for Buffer {
             unsafe { (state[i].dtor)(iovec[i], state[i].source, state[i].user_data) }
         }
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct BufferState {
+    user_data: *const (),
+    dtor: unsafe fn(libc::iovec, BufferSource, *const ()),
+    source: BufferSource,
 }
 
 impl BufferState {
