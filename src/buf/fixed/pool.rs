@@ -10,9 +10,7 @@
 
 use super::plumbing;
 
-use crate::buf::BufferSource;
-use crate::buf::BufferState;
-
+use crate::buf::BufferImpl;
 use crate::runtime::CONTEXT;
 use crate::Buffer;
 
@@ -120,23 +118,13 @@ impl FixedBufPool {
             inner.try_next(cap)?
         };
 
-        unsafe fn check_in(iovec: libc::iovec, source: BufferSource, user_data: *const ()) {
-            let BufferSource::FixedBuf { buf_index } = source else {
-                unreachable!("source of Buffer should be BufferSource::FixedBuf")
-            };
-            let registry = Box::from_raw(user_data as *mut Arc<Mutex<plumbing::Pool>>);
-            let mut registry = registry.lock().unwrap();
-            registry.check_in(buf_index, iovec.iov_len);
-        }
-        let state = BufferState::new(
-            Box::into_raw(Box::new(self.inner.clone())) as _,
-            check_in,
-            BufferSource::FixedBuf {
-                buf_index: index as u16,
-            },
-        );
+        let pool_info = PoolInfo {
+            pool: self.inner.clone(),
+            index: index as u16,
+        };
+        let buf = FixedBuf { iovec, pool_info };
 
-        Some(Buffer::new(vec![iovec], vec![state]))
+        Some(Buffer::new(buf))
     }
 
     /// Resolves to a buffer of requested capacity
@@ -296,4 +284,51 @@ pub fn unregister() -> io::Result<()> {
             .expect("Not in a runtime context")
             .unregister_buffers()
     })
+}
+
+pub(crate) struct FixedBuf {
+    iovec: libc::iovec,
+    pool_info: PoolInfo,
+}
+
+#[derive(Clone)]
+pub(crate) struct PoolInfo {
+    pool: Arc<Mutex<plumbing::Pool>>,
+    pub index: u16,
+}
+
+unsafe impl BufferImpl for FixedBuf {
+    type UserData = PoolInfo;
+
+    fn dtor() -> Box<dyn Fn(*mut u8, usize, *mut ())> {
+        Box::new(|_ptr: *mut u8, _len: usize, user: *mut ()| unsafe {
+            let pool_info = Box::from_raw(user as *mut PoolInfo);
+            let mut pool = pool_info.pool.lock().unwrap();
+            pool.check_in(pool_info.index as usize);
+        })
+    }
+
+    fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Vec<Self::UserData>) {
+        let FixedBuf { iovec, pool_info } = self;
+        (
+            vec![iovec.iov_base as _],
+            vec![iovec.iov_len],
+            vec![pool_info],
+        )
+    }
+
+    unsafe fn from_raw_parts(
+        ptr: Vec<*mut u8>,
+        len: Vec<usize>,
+        user: Vec<Self::UserData>,
+    ) -> Self {
+        let iovec = libc::iovec {
+            iov_base: ptr[0] as _,
+            iov_len: len[0],
+        };
+        FixedBuf {
+            iovec,
+            pool_info: user[0].clone(),
+        }
+    }
 }

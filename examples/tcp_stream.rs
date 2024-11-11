@@ -1,6 +1,6 @@
 use std::{env, net::SocketAddr};
 
-use tokio_uring::{net::TcpStream, Submit};
+use tokio_uring::{net::TcpStream, Buffer, Submit};
 
 fn main() {
     let args: Vec<_> = env::args().collect();
@@ -13,7 +13,8 @@ fn main() {
 
     tokio_uring::start(async {
         let stream = TcpStream::connect(socket_addr).await.unwrap();
-        let buf = vec![1u8; 128].into();
+        let buffer = Buffer::new(vec![1u8; 128]);
+        let buf = buffer;
 
         let (n, buf) = stream.write(buf).submit().await.unwrap();
         println!("written: {}", n);

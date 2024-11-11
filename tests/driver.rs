@@ -1,6 +1,6 @@
 use tempfile::NamedTempFile;
 
-use tokio_uring::{fs::File, Submit};
+use tokio_uring::{fs::File, Buffer, Submit};
 
 #[path = "../src/future.rs"]
 #[allow(warnings)]
@@ -14,7 +14,7 @@ fn too_many_submissions() {
         let file = File::create(tempfile.path()).await.unwrap();
         for _ in 0..600 {
             poll_once(async {
-                file.write_at(b"hello world".to_vec().into(), 0)
+                file.write_at(Buffer::new(b"hello world".to_vec()), 0)
                     .submit()
                     .await
                     .unwrap();
