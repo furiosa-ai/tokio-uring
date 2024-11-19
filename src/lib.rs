@@ -79,6 +79,7 @@ pub mod fs;
 pub mod net;
 
 pub use io::write::*;
+pub use io::read::*;
 pub use runtime::driver::op::{InFlightOneshot, OneshotOutputTransform, UnsubmittedOneshot};
 pub use runtime::spawn;
 pub use runtime::Runtime;
