@@ -8,8 +8,7 @@
 
 use super::plumbing;
 
-use crate::buf::BufferSource;
-use crate::buf::BufferState;
+use crate::buf::BufferImpl;
 use crate::runtime::CONTEXT;
 use crate::Buffer;
 use std::io;
@@ -52,7 +51,7 @@ impl FixedBufRegistry {
     /// application, unless the buffer is already in use.
     ///
     /// The buffer is released to be available again once the
-    /// returned `FixedBuf` handle has been dropped. An I/O operation
+    /// returned `Buffer` handle has been dropped. An I/O operation
     /// using the buffer takes ownership of it and returns it once completed,
     /// preventing shared use of the buffer while the operation is in flight.
     pub fn check_out(&self, index: usize) -> Option<Buffer> {
@@ -61,23 +60,16 @@ impl FixedBufRegistry {
             inner.check_out(index)?
         };
 
-        unsafe fn check_in(iovec: libc::iovec, source: BufferSource, user_data: *const ()) {
-            let BufferSource::FixedBuf { buf_index } = source else {
-                unreachable!("source of Buffer should be BufferSource::FixedBuf")
-            };
-            let registry = Box::from_raw(user_data as *mut Arc<Mutex<plumbing::Registry>>);
-            let mut registry = registry.lock().unwrap();
-            registry.check_in(buf_index as usize, iovec.iov_len);
-        }
-        let state = BufferState::new(
-            Box::into_raw(Box::new(self.inner.clone())) as _,
-            check_in,
-            BufferSource::FixedBuf {
-                buf_index: index as u16,
-            },
-        );
+        let registry_info = RegistryInfo {
+            registry: self.inner.clone(),
+            index: index as u16,
+        };
+        let buf = FixedBuf {
+            iovec,
+            registry_info,
+        };
 
-        Some(Buffer::new(vec![iovec], vec![state]))
+        Some(Buffer::new(buf))
     }
 }
 
@@ -186,4 +178,54 @@ pub fn unregister() -> io::Result<()> {
             .expect("Not in a runtime context")
             .unregister_buffers()
     })
+}
+
+pub(crate) struct FixedBuf {
+    pub iovec: libc::iovec,
+    pub registry_info: RegistryInfo,
+}
+
+#[derive(Clone)]
+pub(crate) struct RegistryInfo {
+    registry: Arc<Mutex<plumbing::Registry>>,
+    pub index: u16,
+}
+
+unsafe impl BufferImpl for FixedBuf {
+    type UserData = RegistryInfo;
+
+    fn dtor() -> Box<dyn Fn(*mut u8, usize, *mut ())> {
+        Box::new(|_ptr: *mut u8, _len: usize, user: *mut ()| unsafe {
+            let registry_info = Box::from_raw(user as *mut RegistryInfo);
+            let mut registry = registry_info.registry.lock().unwrap();
+            registry.check_in(registry_info.index as usize);
+        })
+    }
+
+    fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Vec<Self::UserData>) {
+        let FixedBuf {
+            iovec,
+            registry_info,
+        } = self;
+        (
+            vec![iovec.iov_base as _],
+            vec![iovec.iov_len],
+            vec![registry_info],
+        )
+    }
+
+    unsafe fn from_raw_parts(
+        ptr: Vec<*mut u8>,
+        len: Vec<usize>,
+        user: Vec<Self::UserData>,
+    ) -> Self {
+        let iovec = libc::iovec {
+            iov_base: ptr[0] as _,
+            iov_len: len[0],
+        };
+        FixedBuf {
+            iovec,
+            registry_info: user[0].clone(),
+        }
+    }
 }

@@ -3,16 +3,14 @@
 //! `io-uring` APIs require passing ownership of buffers to the runtime. The
 //! crate defines [`IoBuf`] and [`IoBufMut`] traits which are implemented by buffer
 //! types that respect the `io-uring` contract.
-
 pub mod fixed;
 
 mod io_buf;
+use std::any::{Any, TypeId};
+use std::fmt::Debug;
 use std::{
-    convert::TryFrom,
-    iter::zip,
     mem::ManuallyDrop,
     ops::{Index, IndexMut},
-    ptr,
 };
 
 pub use io_buf::IoBuf;
@@ -26,8 +24,6 @@ pub use slice::Slice;
 mod bounded;
 pub use bounded::{BoundedBuf, BoundedBufMut};
 
-use crate::Error;
-
 pub(crate) fn deref(buf: &impl IoBuf) -> &[u8] {
     // Safety: the `IoBuf` trait is marked as unsafe and is expected to be
     // implemented correctly.
@@ -40,30 +36,100 @@ pub(crate) fn deref_mut(buf: &mut impl IoBufMut) -> &mut [u8] {
     unsafe { std::slice::from_raw_parts_mut(buf.stable_mut_ptr(), buf.bytes_init()) }
 }
 
-// FIXME: Make public only for dtor function signature.
+/// # Safety
+///
+/// Returned pointer and length from `into_raw_parts` must be valid.
+///
+/// If you implement `BufferImpl` for some type `B`, `from_raw_parts(into_raw_parts(buf))`
+/// must be equal to origin `buf`.
+///
 #[allow(missing_docs)]
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum BufferSource {
-    RawPtr,
-    Vector { capacity: usize },
-    FixedBuf { buf_index: u16 },
+pub unsafe trait BufferImpl: Any {
+    type UserData: Send + Sync + 'static;
+
+    fn dtor() -> Box<dyn Fn(*mut u8, usize, *mut ())>;
+    fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Vec<Self::UserData>);
+    /// # Safety
+    /// `from_raw_parts(into_raw_parts(buf))` must be equal to `buf`
+    unsafe fn from_raw_parts(ptr: Vec<*mut u8>, len: Vec<usize>, user: Vec<Self::UserData>)
+        -> Self;
 }
 
 #[allow(missing_docs)]
 pub struct Buffer {
     iovecs: Vec<libc::iovec>,
-    state: Vec<BufferState>,
+    user_data: Vec<*mut ()>,
+    ty: TypeId,
+    // SAFETY: Buffer cannot be used after execute `dtor`
+    dtor: Box<dyn Fn(*mut u8, usize, *mut ())>,
 }
 
 unsafe impl Send for Buffer {}
 unsafe impl Sync for Buffer {}
 
+// FIXME
+impl Debug for Buffer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Buffer")
+            .field("iovecs", &self.iovecs)
+            .field("user", &self.user_data)
+            .field("ty", &self.ty)
+            // .field("dtor", &self.dtor)
+            .finish()
+    }
+}
+
 impl Buffer {
-    fn new(iovecs: Vec<libc::iovec>, state: Vec<BufferState>) -> Self {
-        assert_eq!(iovecs.len(), state.len());
-        Buffer { iovecs, state }
+    #[allow(missing_docs)]
+    pub fn new<B: BufferImpl>(buf: B) -> Self {
+        let ty = buf.type_id();
+        let (ptr, len, user_data) = buf.into_raw_parts();
+        let iovecs = ptr
+            .into_iter()
+            .zip(len)
+            .map(|(base, len)| libc::iovec {
+                iov_base: base as _,
+                iov_len: len,
+            })
+            .collect();
+        let user_data = user_data
+            .into_iter()
+            .map(|user| Box::into_raw(Box::new(user)) as _)
+            .collect();
+        Self {
+            iovecs,
+            user_data,
+            ty,
+            dtor: B::dtor(),
+        }
     }
 
+    #[allow(missing_docs)]
+    pub fn try_into<B: BufferImpl>(self) -> Result<B, Self> {
+        // Convert only if the type id of source is equal to the type id of target
+        if self.ty != TypeId::of::<B>() {
+            return Err(self);
+        }
+
+        unsafe {
+            let this = ManuallyDrop::new(self);
+            let user = this
+                .user_data
+                .iter()
+                .map(|user| *Box::from_raw(*user as *mut B::UserData))
+                .collect();
+            let (ptrs, lens) = this
+                .iovecs
+                .iter()
+                .map(|iovec| (iovec.iov_base as *mut u8, iovec.iov_len))
+                .collect();
+            let buf = B::from_raw_parts(ptrs, lens, user);
+            Ok(buf)
+        }
+    }
+}
+
+impl Buffer {
     #[allow(missing_docs)]
     pub fn len(&self) -> usize {
         self.iovecs.len()
@@ -74,218 +140,24 @@ impl Buffer {
         self.len() == 0
     }
 
-    #[allow(missing_docs)]
-    pub fn fill(&mut self) {
-        for (iovec, state) in zip(&mut self.iovecs, &self.state) {
-            if let BufferSource::Vector { capacity } = state.source {
-                iovec.iov_len = capacity;
-            }
-        }
+    pub(crate) fn user_data(&self) -> &Vec<*mut ()> {
+        &self.user_data
     }
 
-    #[allow(missing_docs)]
-    pub fn iter(&self) -> std::slice::Iter<'_, libc::iovec> {
-        self.iovecs.iter()
-    }
-
-    #[allow(clippy::missing_safety_doc)]
-    #[allow(missing_docs)]
-    pub unsafe fn from_raw_parts(
-        ptr: *mut u8,
-        len: usize,
-        user_data: *const (),
-        dtor: unsafe fn(libc::iovec, BufferSource, *const ()),
-    ) -> Self {
-        let iov = libc::iovec {
-            iov_base: ptr as _,
-            iov_len: len,
-        };
-        let state = BufferState::new(user_data, dtor, BufferSource::RawPtr);
-        Self::new(vec![iov], vec![state])
-    }
-
-    #[allow(clippy::missing_safety_doc)]
-    #[allow(missing_docs)]
-    pub unsafe fn from_iovecs(
-        iovec: Vec<libc::iovec>,
-        user_data: *const (),
-        dtor: unsafe fn(libc::iovec, BufferSource, *const ()),
-    ) -> Self {
-        let states = std::iter::repeat(BufferState::new(user_data, dtor, BufferSource::RawPtr))
-            .take(iovec.len())
-            .collect();
-        Self::new(iovec, states)
-    }
-
-    pub(crate) fn source(&self) -> impl Iterator<Item = &BufferSource> {
-        self.state.iter().map(|state| &state.source)
+    pub(crate) fn type_id(&self) -> TypeId {
+        self.ty
     }
 }
 
 impl Drop for Buffer {
     fn drop(&mut self) {
-        let Self {
-            iovecs: iovec,
-            state,
-        } = self;
-        for i in 0..iovec.len() {
-            unsafe { (state[i].dtor)(iovec[i], state[i].source, state[i].user_data) }
+        for i in 0..self.iovecs.len() {
+            let ptr = self.iovecs[i].iov_base as *mut u8;
+            let len = self.iovecs[i].iov_len;
+            let user = self.user_data[i];
+            (self.dtor)(ptr, len, user);
         }
     }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct BufferState {
-    user_data: *const (),
-    dtor: unsafe fn(libc::iovec, BufferSource, *const ()),
-    source: BufferSource,
-}
-
-impl BufferState {
-    fn new(
-        user_data: *const (),
-        dtor: unsafe fn(libc::iovec, BufferSource, *const ()),
-        source: BufferSource,
-    ) -> Self {
-        BufferState {
-            dtor,
-            user_data,
-            source,
-        }
-    }
-}
-
-impl From<Vec<u8>> for Buffer {
-    fn from(buf: Vec<u8>) -> Self {
-        let mut vec = ManuallyDrop::new(buf);
-        let base = vec.as_mut_ptr();
-        let iov_len = vec.len();
-        let total_bytes = vec.capacity();
-
-        let iov = libc::iovec {
-            iov_base: base as _,
-            iov_len,
-        };
-
-        let state = BufferState::new(
-            ptr::null(),
-            drop_vec,
-            BufferSource::Vector {
-                capacity: total_bytes,
-            },
-        );
-        Buffer::new(vec![iov], vec![state])
-    }
-}
-
-impl From<Vec<Vec<u8>>> for Buffer {
-    fn from(bufs: Vec<Vec<u8>>) -> Self {
-        let mut iovecs = Vec::with_capacity(bufs.len());
-        let mut states = Vec::with_capacity(bufs.len());
-
-        for buf in bufs {
-            let mut vec = ManuallyDrop::new(buf);
-
-            let base = vec.as_mut_ptr();
-            let iov_len = vec.len();
-            let total_bytes = vec.capacity();
-
-            let iov = libc::iovec {
-                iov_base: base as *mut libc::c_void,
-                iov_len,
-            };
-
-            let state = BufferState::new(
-                ptr::null(),
-                drop_vec,
-                BufferSource::Vector {
-                    capacity: total_bytes,
-                },
-            );
-            iovecs.push(iov);
-            states.push(state);
-        }
-
-        Buffer::new(iovecs, states)
-    }
-}
-
-impl TryFrom<Buffer> for Vec<u8> {
-    type Error = Error<Buffer>;
-
-    fn try_from(buf: Buffer) -> Result<Self, Self::Error> {
-        if buf.len() != 1 {
-            return Err(Error(
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "length of vector of this Buffer must be 1",
-                ),
-                buf,
-            ));
-        }
-
-        let BufferSource::Vector { capacity } = buf.state[0].source else {
-            return Err(Error(
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "the source of this Buffer is not Vec",
-                ),
-                buf,
-            ));
-        };
-
-        let this = ManuallyDrop::new(buf);
-        Ok(unsafe {
-            Vec::from_raw_parts(
-                this.iovecs[0].iov_base as _,
-                this.iovecs[0].iov_len,
-                capacity,
-            )
-        })
-    }
-}
-
-impl TryFrom<Buffer> for Vec<Vec<u8>> {
-    type Error = Error<Buffer>;
-
-    fn try_from(buf: Buffer) -> Result<Self, Self::Error> {
-        if buf
-            .state
-            .iter()
-            .any(|state| matches!(state.source, BufferSource::Vector { .. }))
-        {
-            return Err(Error(
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "the source of any vector of this Buffer is not Vec",
-                ),
-                buf,
-            ));
-        }
-
-        let this = ManuallyDrop::new(buf);
-        let mut vecs = Vec::with_capacity(this.iovecs.len());
-        for i in 0..this.iovecs.len() {
-            let BufferSource::Vector { capacity } = this.state[i].source else {
-                unreachable!("source of Buffer should be BufferSource::Vector")
-            };
-            vecs.push(unsafe {
-                Vec::from_raw_parts(
-                    this.iovecs[i].iov_base as _,
-                    this.iovecs[i].iov_len,
-                    capacity,
-                )
-            });
-        }
-        Ok(vecs)
-    }
-}
-
-unsafe fn drop_vec(iovec: libc::iovec, source: BufferSource, _user_data: *const ()) {
-    let BufferSource::Vector { capacity } = source else {
-        unreachable!("source of Buffer should be BufferSource::Vector")
-    };
-    Vec::from_raw_parts(iovec.iov_base as _, iovec.iov_len, capacity);
 }
 
 impl Index<usize> for Buffer {
@@ -306,7 +178,7 @@ impl IndexMut<usize> for Buffer {
 
 unsafe impl IoBuf for Buffer {
     fn stable_ptr(&self) -> *const u8 {
-        if self.state.len() == 1 {
+        if self.iovecs.len() == 1 {
             self.iovecs[0].iov_base as *const u8
         } else {
             self.iovecs.as_ptr() as *const u8
@@ -318,39 +190,79 @@ unsafe impl IoBuf for Buffer {
     }
 
     fn bytes_total(&self) -> usize {
-        self.state
-            .iter()
-            .zip(self.iovecs.iter())
-            .map(|(state, iovec)| {
-                if let BufferSource::Vector { capacity } = state.source {
-                    capacity
-                } else {
-                    iovec.iov_len
-                }
-            })
-            .sum()
+        IoBuf::bytes_init(self)
     }
 }
 
 unsafe impl IoBufMut for Buffer {
     fn stable_mut_ptr(&mut self) -> *mut u8 {
-        if self.state.len() == 1 {
+        if self.iovecs.len() == 1 {
             self.iovecs[0].iov_base as *mut u8
         } else {
             self.iovecs.as_mut_ptr() as *mut u8
         }
     }
 
-    unsafe fn set_init(&mut self, mut pos: usize) {
-        for (iovec, state) in zip(&mut self.iovecs, &self.state) {
-            let total_bytes = if let BufferSource::Vector { capacity } = state.source {
-                capacity
-            } else {
-                iovec.iov_len
-            };
-            let size = std::cmp::min(total_bytes, pos);
-            iovec.iov_len = size;
-            pos -= size;
+    unsafe fn set_init(&mut self, mut _pos: usize) {
+        // Do nothing. We don't distinguish length and capacity.
+    }
+}
+
+unsafe impl BufferImpl for Vec<u8> {
+    type UserData = ();
+
+    fn dtor() -> Box<dyn Fn(*mut u8, usize, *mut ())> {
+        Box::new(|ptr: *mut u8, len: usize, _user: *mut ()| unsafe {
+            let _ = Vec::from_raw_parts(ptr, len, len);
+        })
+    }
+
+    fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Vec<Self::UserData>) {
+        let mut this = ManuallyDrop::new(self);
+        let ptr = this.as_mut_ptr() as _;
+        let cap = this.capacity();
+        (vec![ptr], vec![cap], vec![()])
+    }
+
+    unsafe fn from_raw_parts(
+        ptr: Vec<*mut u8>,
+        len: Vec<usize>,
+        _user: Vec<Self::UserData>,
+    ) -> Self {
+        Vec::from_raw_parts(ptr[0], len[0], len[0])
+    }
+}
+
+unsafe impl BufferImpl for Vec<Vec<u8>> {
+    type UserData = ();
+
+    fn dtor() -> Box<dyn Fn(*mut u8, usize, *mut ())> {
+        Box::new(|ptr: *mut u8, len: usize, _user: *mut ()| unsafe {
+            let _ = Vec::from_raw_parts(ptr, len, len);
+        })
+    }
+
+    fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Vec<Self::UserData>) {
+        let mut ptr = Vec::with_capacity(self.len());
+        let mut cap = Vec::with_capacity(self.len());
+        let user = std::iter::repeat(()).take(self.len()).collect();
+        for vec in self.into_iter() {
+            let mut this = ManuallyDrop::new(vec);
+            ptr.push(this.as_mut_ptr() as _);
+            cap.push(this.capacity());
         }
+        (ptr, cap, user)
+    }
+
+    unsafe fn from_raw_parts(
+        ptr: Vec<*mut u8>,
+        len: Vec<usize>,
+        _user: Vec<Self::UserData>,
+    ) -> Self {
+        let mut vec = Vec::with_capacity(ptr.len());
+        for (p, l) in ptr.into_iter().zip(len) {
+            vec.push(Vec::from_raw_parts(p, l, l));
+        }
+        vec
     }
 }

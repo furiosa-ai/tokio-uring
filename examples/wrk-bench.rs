@@ -1,7 +1,7 @@
 use std::io;
 use std::rc::Rc;
 use tokio::task::JoinHandle;
-use tokio_uring::Submit;
+use tokio_uring::{Buffer, Submit};
 
 pub const RESPONSE: &'static [u8] =
     b"HTTP/1.1 200 OK\nContent-Type: text/plain\nContent-Length: 12\n\nHello world!";
@@ -22,7 +22,7 @@ fn main() -> io::Result<()> {
                     let (stream, _) = listener.accept().await?;
 
                     tokio_uring::spawn(async move {
-                        let result = stream.write(RESPONSE.to_vec().into()).submit().await;
+                        let result = stream.write(Buffer::new(RESPONSE.to_vec())).submit().await;
                         if let Err(err) = result {
                             eprintln!("Client connection failed: {}", err);
                         }

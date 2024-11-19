@@ -2,7 +2,6 @@ use tokio_uring::buf::fixed::{pool, registry};
 use tokio_uring::buf::{BoundedBuf, BoundedBufMut};
 use tokio_uring::fs::File;
 
-use std::convert::TryInto;
 use std::fs::File as StdFile;
 use std::io::prelude::*;
 use std::iter;
@@ -150,22 +149,16 @@ fn pool_next_as_concurrency_limit() {
         let mut join_handles = vec![];
         for i in 0..10 {
             let mut buf = buffers.next(BUF_SIZE).await;
-            println!(
-                "[main] iteration {}: obtained buffer {}",
-                i,
-                buf.buf_index()
-            );
             let cloned_file = file.try_clone().unwrap();
 
             let handle = tokio_uring::spawn(async move {
                 let file = File::from_std(cloned_file);
                 let data = [b'0' + i as u8; BUF_SIZE];
                 buf.put_slice(&data);
-                let (_, buf) = file
+                let (_, _buf) = file
                     .write_fixed_all_at(buf, BUF_SIZE as u64 * i)
                     .await
                     .unwrap();
-                println!("[worker {}]: dropping buffer {}", i, buf.buf_index());
             });
 
             join_handles.push(handle);

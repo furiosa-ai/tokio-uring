@@ -1,10 +1,14 @@
-use crate::buf::{BoundedBuf, BufferSource};
+use crate::buf::fixed::pool::PoolInfo;
+use crate::buf::fixed::registry::RegistryInfo;
+use crate::buf::fixed::{pool, registry};
+use crate::buf::BoundedBuf;
 use crate::io::SharedFd;
 use crate::runtime::driver::op::{self, Completable, Op};
 use crate::WithBuffer;
 use crate::{Buffer, Result};
 
 use crate::runtime::CONTEXT;
+use std::any::TypeId;
 use std::io;
 
 pub(crate) struct WriteFixed<T> {
@@ -37,11 +41,28 @@ where
                     // Get raw buffer info
                     let ptr = write_fixed.buf.stable_ptr();
                     let len = write_fixed.buf.bytes_init();
-                    let source = write_fixed.buf.get_buf().source().next().unwrap();
-                    let BufferSource::FixedBuf { buf_index } = source else {
-                        unreachable!("the source of buffer must be FixedBuf")
+                    let buf_type = write_fixed.buf.get_buf().type_id();
+                    // Get buf_index from raw pointer
+                    let buf_index = if buf_type == TypeId::of::<registry::FixedBuf>() {
+                        // Safety: The condition above indicates that the source of buffer is `registry::FixedBuf`.
+                        // According to the `BufferImpl` implementation for `registry::FixedBuf`, the user_data
+                        // pointer contains a raw pointer of type `RegistryInfo`, so this raw pointer casting is safe.
+                        unsafe {
+                            let registry_info =
+                                write_fixed.buf.get_buf().user_data()[0] as *const RegistryInfo;
+                            (*registry_info).index
+                        }
+                    } else if buf_type == TypeId::of::<pool::FixedBuf>() {
+                        // Safety: This raw pointer casting is also safe as above.
+                        unsafe {
+                            let pool_info =
+                                write_fixed.buf.get_buf().user_data()[0] as *const PoolInfo;
+                            (*pool_info).index
+                        }
+                    } else {
+                        panic!("Buffer must be created from FixedBuf");
                     };
-                    opcode::WriteFixed::new(types::Fd(fd.raw_fd()), ptr, len as _, *buf_index)
+                    opcode::WriteFixed::new(types::Fd(fd.raw_fd()), ptr, len as _, buf_index)
                         .offset(offset as _)
                         .build()
                 },

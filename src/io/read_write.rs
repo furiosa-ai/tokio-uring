@@ -1,8 +1,10 @@
 use libc::iovec;
 
-use crate::buf::{BoundedBufMut, Buffer, BufferSource};
+use crate::buf::fixed::{pool, registry};
+use crate::buf::{BoundedBufMut, Buffer};
 use crate::WithBuffer;
 use crate::{buf::BoundedBuf, io::SharedFd, OneshotOutputTransform, Result, UnsubmittedOneshot};
+use std::any::TypeId;
 use std::io;
 
 #[allow(missing_docs)]
@@ -59,9 +61,11 @@ impl Unsubmitted {
 
         let sqe = if buf.len() == 1 {
             // Fixed buffer io not support vectored io
-            let source = buf.source().next().unwrap();
-            if let BufferSource::FixedBuf { buf_index } = source {
-                opcode::WriteFixed::new(types::Fd(fd.raw_fd()), ptr, len as _, *buf_index)
+            if buf.type_id() == TypeId::of::<registry::FixedBuf>()
+                || buf.type_id() == TypeId::of::<pool::FixedBuf>()
+            {
+                let buf_index = buf.user_data()[0] as u16;
+                opcode::WriteFixed::new(types::Fd(fd.raw_fd()), ptr, len as _, buf_index)
                     .offset(offset as _)
                     .build()
             } else {
@@ -92,13 +96,13 @@ impl Unsubmitted {
         let ptr = buf.stable_mut_ptr();
         let len = buf.bytes_total();
 
-        buf.fill();
-
         let sqe = if buf.len() == 1 {
             // Fixed buffer io not support vectored io
-            let source = buf.source().next().unwrap();
-            if let BufferSource::FixedBuf { buf_index } = source {
-                opcode::ReadFixed::new(types::Fd(fd.raw_fd()), ptr, len as _, *buf_index)
+            if buf.type_id() == TypeId::of::<registry::FixedBuf>()
+                || buf.type_id() == TypeId::of::<pool::FixedBuf>()
+            {
+                let buf_index = buf.user_data()[0] as u16;
+                opcode::ReadFixed::new(types::Fd(fd.raw_fd()), ptr, len as _, buf_index)
                     .offset(offset as _)
                     .build()
             } else {

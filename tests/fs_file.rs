@@ -5,9 +5,12 @@ use std::{
 
 use tempfile::NamedTempFile;
 
-use tokio_uring::buf::{fixed::registry, BoundedBuf, BoundedBufMut};
 use tokio_uring::fs::File;
 use tokio_uring::Submit;
+use tokio_uring::{
+    buf::{fixed::registry, BoundedBuf, BoundedBufMut},
+    Buffer,
+};
 
 #[path = "../src/future.rs"]
 #[allow(warnings)]
@@ -16,7 +19,7 @@ mod future;
 const HELLO: &[u8] = b"hello world...";
 
 async fn read_hello(file: &File) {
-    let buf = Vec::<u8>::with_capacity(1024).into();
+    let buf = Buffer::new(Vec::<u8>::with_capacity(1024));
     let (n, buf) = file.read_at(buf, 0).submit().await.unwrap();
     assert_eq!(n, HELLO.len());
     assert_eq!(&buf[0][..n], HELLO);
@@ -40,7 +43,7 @@ fn basic_write() {
 
         let file = File::create(tempfile.path()).await.unwrap();
 
-        file.write_at(HELLO.to_vec().into(), 0)
+        file.write_at(Buffer::new(HELLO.to_vec()), 0)
             .submit()
             .await
             .unwrap();
@@ -57,7 +60,10 @@ fn vectored_read() {
         tempfile.write_all(HELLO).unwrap();
 
         let file = File::open(tempfile.path()).await.unwrap();
-        let bufs = vec![Vec::<u8>::with_capacity(5), Vec::<u8>::with_capacity(9)].into();
+        let bufs = Buffer::new(vec![
+            Vec::<u8>::with_capacity(5),
+            Vec::<u8>::with_capacity(9),
+        ]);
         let (n, bufs) = file.read_at(bufs, 0).submit().await.unwrap();
 
         assert_eq!(n, HELLO.len());
@@ -73,7 +79,7 @@ fn vectored_write() {
         let file = File::create(tempfile.path()).await.unwrap();
         let buf1 = "hello".to_owned().into_bytes();
         let buf2 = " world...".to_owned().into_bytes();
-        let bufs = vec![buf1, buf2].into();
+        let bufs = Buffer::new(vec![buf1, buf2]);
 
         file.write_at(bufs, 0).submit().await.unwrap();
 
@@ -121,7 +127,7 @@ fn drop_open() {
         // Do something else
         let file = File::create(tempfile.path()).await.unwrap();
 
-        file.write_at(HELLO.to_vec().into(), 0)
+        file.write_at(Buffer::new(HELLO.to_vec()), 0)
             .submit()
             .await
             .unwrap();
@@ -152,7 +158,7 @@ fn sync_doesnt_kill_anything() {
         let file = File::create(tempfile.path()).await.unwrap();
         file.sync_all().await.unwrap();
         file.sync_data().await.unwrap();
-        file.write_at("foo".to_owned().into_bytes().into(), 0)
+        file.write_at(Buffer::new("foo".to_owned().into_bytes()), 0)
             .submit()
             .await
             .unwrap();
@@ -291,8 +297,8 @@ fn write_linked() {
         let tempfile = tempfile();
         let file = File::create(tempfile.path()).await.unwrap();
 
-        let write1 = file.write_at(HELLO.to_vec().into(), 0);
-        let write2 = file.write_at(HELLO.to_vec().into(), HELLO.len() as u64);
+        let write1 = file.write_at(Buffer::new(HELLO.to_vec()), 0);
+        let write2 = file.write_at(Buffer::new(HELLO.to_vec()), HELLO.len() as u64);
 
         let future1 = write1.link(write2).submit();
 
