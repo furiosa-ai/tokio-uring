@@ -1,10 +1,14 @@
-use crate::buf::fixed::FixedBuf;
+use crate::buf::fixed::pool::PoolInfo;
+use crate::buf::fixed::registry::RegistryInfo;
+use crate::buf::fixed::{pool, registry};
 use crate::buf::BoundedBufMut;
 use crate::io::SharedFd;
 use crate::runtime::driver::op::{self, Completable, Op};
-use crate::BufResult;
+use crate::WithBuffer;
+use crate::{Buffer, Result};
 
 use crate::runtime::CONTEXT;
+use std::any::TypeId;
 use std::io;
 
 pub(crate) struct ReadFixed<T> {
@@ -19,7 +23,7 @@ pub(crate) struct ReadFixed<T> {
 
 impl<T> Op<ReadFixed<T>>
 where
-    T: BoundedBufMut<BufMut = FixedBuf>,
+    T: BoundedBufMut<BufMut = Buffer>,
 {
     pub(crate) fn read_fixed_at(
         fd: &SharedFd,
@@ -38,7 +42,27 @@ where
                     // Get raw buffer info
                     let ptr = read_fixed.buf.stable_mut_ptr();
                     let len = read_fixed.buf.bytes_total();
-                    let buf_index = read_fixed.buf.get_buf().buf_index();
+                    let buf_type = read_fixed.buf.get_buf().type_id();
+                    // Get buf_index from raw pointer
+                    let buf_index = if buf_type == TypeId::of::<registry::FixedBuf>() {
+                        // Safety: The condition above indicates that the source of buffer is `registry::FixedBuf`.
+                        // According to the `BufferImpl` implementation for `registry::FixedBuf`, the user_data
+                        // pointer contains a raw pointer of type `RegistryInfo`, so this raw pointer casting is safe.
+                        unsafe {
+                            let registry_info =
+                                read_fixed.buf.get_buf().user_data()[0] as *const RegistryInfo;
+                            (*registry_info).index
+                        }
+                    } else if buf_type == TypeId::of::<pool::FixedBuf>() {
+                        // Safety: This raw pointer casting is also safe as above.
+                        unsafe {
+                            let pool_info =
+                                read_fixed.buf.get_buf().user_data()[0] as *const PoolInfo;
+                            (*pool_info).index
+                        }
+                    } else {
+                        panic!("Buffer must be created from FixedBuf");
+                    };
                     opcode::ReadFixed::new(types::Fd(fd.raw_fd()), ptr, len as _, buf_index)
                         .offset(offset as _)
                         .build()
@@ -50,15 +74,15 @@ where
 
 impl<T> Completable for ReadFixed<T>
 where
-    T: BoundedBufMut<BufMut = FixedBuf>,
+    T: BoundedBufMut<BufMut = Buffer>,
 {
-    type Output = BufResult<usize, T>;
+    type Output = Result<usize, T>;
 
     fn complete(self, cqe: op::CqeResult) -> Self::Output {
-        // Convert the operation result to `usize`
-        let res = cqe.result.map(|v| v as usize);
         // Recover the buffer
         let mut buf = self.buf;
+        // Convert the operation result to `usize`
+        let res = cqe.result.map(|v| v as usize);
 
         // If the operation was successful, advance the initialized cursor.
         if let Ok(n) = res {
@@ -68,6 +92,6 @@ where
             }
         }
 
-        (res, buf)
+        res.with_buffer(buf)
     }
 }

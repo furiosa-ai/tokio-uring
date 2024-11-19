@@ -4,7 +4,7 @@
 
 use std::env;
 
-use tokio_uring::{fs::File, net::TcpListener, Submit};
+use tokio_uring::{fs::File, net::TcpListener, Buffer, Submit};
 
 fn main() {
     // The file to serve over TCP is passed as a CLI argument
@@ -27,22 +27,21 @@ fn main() {
             tokio_uring::spawn(async move {
                 // Open the file without blocking
                 let file = File::open(path).await.unwrap();
-                let mut buf = vec![0; 16 * 1_024];
+                let mut buf = Buffer::new(vec![0; 16 * 1_024]);
 
                 // Track the current position in the file;
                 let mut pos = 0;
 
                 loop {
                     // Read a chunk
-                    let (res, b) = file.read_at(buf, pos).submit().await;
-                    let n = res.unwrap();
+                    let (n, b) = file.read_at(buf, pos).submit().await.unwrap();
 
                     if n == 0 {
                         break;
                     }
 
-                    let (res, b) = socket.write(b).submit().await;
-                    pos += res.unwrap() as u64;
+                    let (n, b) = socket.write(b).submit().await.unwrap();
+                    pos += n as u64;
 
                     buf = b;
                 }

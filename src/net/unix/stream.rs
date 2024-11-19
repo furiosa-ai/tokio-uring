@@ -1,8 +1,7 @@
 use crate::{
-    buf::fixed::FixedBuf,
-    buf::{BoundedBuf, BoundedBufMut},
+    buf::{BoundedBuf, BoundedBufMut, Buffer},
     io::{SharedFd, Socket},
-    UnsubmittedWrite,
+    Submit, Unsubmitted,
 };
 use socket2::SockAddr;
 use std::{
@@ -29,8 +28,7 @@ use std::{
 ///         let mut stream = UnixStream::connect("/tmp/tokio-uring-unix-test.sock").await?;
 ///
 ///         // Write some data.
-///         let (result, _) = stream.write(b"hello world!".as_slice()).submit().await;
-///         result.unwrap();
+///         stream.write(b"hello world!".to_vec().into()).submit().await.unwrap();
 ///
 ///         Ok(())
 ///     })
@@ -76,7 +74,7 @@ impl UnixStream {
 
     /// Read some data from the stream into the buffer, returning the original buffer and
     /// quantity of data read.
-    pub async fn read<T: BoundedBufMut>(&self, buf: T) -> crate::BufResult<usize, T> {
+    pub async fn read(&self, buf: Buffer) -> crate::Result<usize, Buffer> {
         self.inner.read(buf).await
     }
 
@@ -91,34 +89,17 @@ impl UnixStream {
     /// In addition to errors that can be reported by `read`,
     /// this operation fails if the buffer is not registered in the
     /// current `tokio-uring` runtime.
-    pub async fn read_fixed<T>(&self, buf: T) -> crate::BufResult<usize, T>
+    pub async fn read_fixed<T>(&self, buf: T) -> crate::Result<usize, T>
     where
-        T: BoundedBufMut<BufMut = FixedBuf>,
+        T: BoundedBufMut<BufMut = Buffer>,
     {
         self.inner.read_fixed(buf).await
     }
 
     /// Write some data to the stream from the buffer, returning the original buffer and
     /// quantity of data written.
-    pub fn write<T: BoundedBuf>(&self, buf: T) -> UnsubmittedWrite<T> {
+    pub fn write(&self, buf: Buffer) -> Unsubmitted {
         self.inner.write(buf)
-    }
-
-    /// Attempts to write an entire buffer to the stream.
-    ///
-    /// This method will continuously call [`write`] until there is no more data to be
-    /// written or an error is returned. This method will not return until the entire
-    /// buffer has been successfully written or an error has occurred.
-    ///
-    /// If the buffer contains no data, this will never call [`write`].
-    ///
-    /// # Errors
-    ///
-    /// This function will return the first error that [`write`] returns.
-    ///
-    /// [`write`]: Self::write
-    pub async fn write_all<T: BoundedBuf>(&self, buf: T) -> crate::BufResult<(), T> {
-        self.inner.write_all(buf).await
     }
 
     /// Like [`write`], but using a pre-mapped buffer
@@ -132,9 +113,9 @@ impl UnixStream {
     /// In addition to errors that can be reported by `write`,
     /// this operation fails if the buffer is not registered in the
     /// current `tokio-uring` runtime.
-    pub async fn write_fixed<T>(&self, buf: T) -> crate::BufResult<usize, T>
+    pub async fn write_fixed<T>(&self, buf: T) -> crate::Result<usize, T>
     where
-        T: BoundedBuf<Buf = FixedBuf>,
+        T: BoundedBuf<Buf = Buffer>,
     {
         self.inner.write_fixed(buf).await
     }
@@ -152,9 +133,9 @@ impl UnixStream {
     /// This function will return the first error that [`write_fixed`] returns.
     ///
     /// [`write_fixed`]: Self::write
-    pub async fn write_fixed_all<T>(&self, buf: T) -> crate::BufResult<(), T>
+    pub async fn write_fixed_all<T>(&self, buf: T) -> crate::Result<(), T>
     where
-        T: BoundedBuf<Buf = FixedBuf>,
+        T: BoundedBuf<Buf = Buffer>,
     {
         self.inner.write_fixed_all(buf).await
     }
@@ -183,8 +164,8 @@ impl UnixStream {
     /// written to this writer.
     ///
     /// [`Ok(n)`]: Ok
-    pub async fn writev<T: BoundedBuf>(&self, buf: Vec<T>) -> crate::BufResult<usize, Vec<T>> {
-        self.inner.writev(buf).await
+    pub async fn writev(&self, buf: Buffer) -> crate::Result<usize, Buffer> {
+        self.inner.write(buf).submit().await
     }
 
     /// Shuts down the read, write, or both halves of this connection.

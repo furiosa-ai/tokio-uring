@@ -4,7 +4,10 @@
 use std::{env, iter, net::SocketAddr};
 
 use tokio_uring::{
-    buf::{fixed::FixedBufRegistry, BoundedBuf, IoBufMut},
+    buf::{
+        fixed::registry::{self, FixedBufRegistry},
+        BoundedBuf,
+    },
     net::{TcpListener, TcpStream},
 }; // BoundedBuf for slice method
 
@@ -34,11 +37,11 @@ async fn accept_loop(listen_addr: SocketAddr) {
     );
 
     // Other iterators may be passed to FixedBufRegistry::new also.
-    let registry = FixedBufRegistry::new(iter::repeat(vec![0; 4096]).take(POOL_SIZE));
+    let buffers = iter::repeat(vec![0; 4096]).take(POOL_SIZE);
 
     // Register the buffers with the kernel, asserting the syscall passed.
 
-    registry.register().unwrap();
+    let registry = registry::register(buffers).unwrap();
 
     loop {
         let (stream, peer) = listener.accept().await.unwrap();
@@ -50,11 +53,7 @@ async fn accept_loop(listen_addr: SocketAddr) {
 // A loop that echoes input to output. Use one fixed buffer for receiving and sending the response
 // back. Once the connection is closed, the function returns and the fixed buffer is dropped,
 // getting the fixed buffer index returned to the available pool kept by the registry.
-async fn echo_handler<T: IoBufMut>(
-    stream: TcpStream,
-    peer: SocketAddr,
-    registry: FixedBufRegistry<T>,
-) {
+async fn echo_handler(stream: TcpStream, peer: SocketAddr, registry: FixedBufRegistry) {
     println!("peer {} connected", peer);
 
     // Get one of the two fixed buffers.
@@ -79,17 +78,14 @@ async fn echo_handler<T: IoBufMut>(
         // Each time through the loop, use fbuf and then get it back for the next
         // iteration.
 
-        let (result, fbuf1) = stream.read_fixed(fbuf).await;
+        let (read, fbuf1) = stream.read_fixed(fbuf).await.unwrap();
         fbuf = {
-            let read = result.unwrap();
             if read == 0 {
                 break;
             }
             assert_eq!(4096, fbuf1.len()); // To prove a point.
 
-            let (res, nslice) = stream.write_fixed_all(fbuf1.slice(..read)).await;
-
-            let _ = res.unwrap();
+            let (_, nslice) = stream.write_fixed_all(fbuf1.slice(..read)).await.unwrap();
             println!("peer {} all {} bytes ping-ponged", peer, read);
             n += read;
 

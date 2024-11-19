@@ -34,11 +34,11 @@ use std::{
 ///     let tx = TcpStream::connect("127.0.0.1:2345".parse().unwrap()).await.unwrap();
 ///     let rx = rx_ch.await.expect("The spawned task expected to send a TcpStream");
 ///
-///     tx.write(b"test" as &'static [u8]).submit().await.0.unwrap();
+///     tx.write(b"test".to_vec().into()).submit().await.unwrap();
 ///
-///     let (_, buf) = rx.read(vec![0; 4]).await;
+///     let (_, buf) = rx.read(vec![0; 4].into()).await.unwrap();
 ///
-///     assert_eq!(buf, b"test");
+///     assert_eq!(&buf[0], b"test");
 /// });
 /// ```
 pub struct TcpListener {

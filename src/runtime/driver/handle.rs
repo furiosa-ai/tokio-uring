@@ -20,7 +20,6 @@ use std::os::unix::io::{AsRawFd, RawFd};
 use std::rc::{Rc, Weak};
 use std::task::{Context, Poll};
 
-use crate::buf::fixed::FixedBuffers;
 use crate::runtime::driver::op::{Completable, MultiCQEFuture, Op, Updateable};
 use crate::runtime::driver::Driver;
 
@@ -49,18 +48,12 @@ impl Handle {
         self.inner.borrow_mut().uring.submit()
     }
 
-    pub(crate) fn register_buffers(
-        &self,
-        buffers: Rc<RefCell<dyn FixedBuffers>>,
-    ) -> io::Result<()> {
+    pub(crate) fn register_buffers(&self, buffers: &[libc::iovec]) -> io::Result<()> {
         self.inner.borrow_mut().register_buffers(buffers)
     }
 
-    pub(crate) fn unregister_buffers(
-        &self,
-        buffers: Rc<RefCell<dyn FixedBuffers>>,
-    ) -> io::Result<()> {
-        self.inner.borrow_mut().unregister_buffers(buffers)
+    pub(crate) fn unregister_buffers(&self) -> io::Result<()> {
+        self.inner.borrow_mut().unregister_buffers()
     }
 
     pub fn register_files(&self, fds: &[RawFd]) -> io::Result<()> {

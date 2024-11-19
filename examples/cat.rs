@@ -3,7 +3,7 @@ use std::{
     {env, io},
 };
 
-use tokio_uring::{fs::File, Submit};
+use tokio_uring::{fs::File, Buffer, Submit};
 
 fn main() {
     // The file to `cat` is passed as a CLI argument
@@ -22,21 +22,19 @@ fn main() {
     tokio_uring::start(async {
         // Open the file without blocking
         let file = File::open(path).await.unwrap();
-        let mut buf = vec![0; 16 * 1_024];
+        let mut buf = Buffer::new(vec![0; 16 * 1_024]);
 
         // Track the current position in the file;
         let mut pos = 0;
 
         loop {
             // Read a chunk
-            let (res, b) = file.read_at(buf, pos).submit().await;
-            let n = res.unwrap();
-
+            let (n, b) = file.read_at(buf, pos).submit().await.unwrap();
             if n == 0 {
                 break;
             }
 
-            out.write_all(&b[..n]).unwrap();
+            out.write_all(&b[0][..n]).unwrap();
             pos += n as u64;
 
             buf = b;

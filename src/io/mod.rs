@@ -15,11 +15,7 @@ pub(crate) use noop::NoOp;
 
 mod open;
 
-pub(crate) mod read;
-
 mod read_fixed;
-
-pub(crate) mod readv;
 
 mod recv_from;
 
@@ -48,11 +44,6 @@ mod unlink_at;
 mod util;
 pub(crate) use util::cstr;
 
-pub(crate) mod write;
+pub(crate) mod read_write;
 
 mod write_fixed;
-
-pub(crate) mod writev;
-
-mod writev_all;
-pub(crate) use writev_all::writev_at_all;

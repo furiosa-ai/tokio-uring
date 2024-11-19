@@ -27,6 +27,7 @@ pub(crate) type Completion = SlabListEntry<CqeResult>;
 pub struct UnsubmittedOneshot<D: 'static, T: OneshotOutputTransform<StoredData = D>> {
     stable_data: D,
     post_op: T,
+    #[allow(missing_docs)]
     pub sqe: squeue::Entry,
 }
 
@@ -62,7 +63,7 @@ impl<D, T: OneshotOutputTransform<StoredData = D>> UnsubmittedOneshot<D, T> {
         self
     }
 
-    // Create inflight from submitted index.
+    /// Create inflight from submitted index.
     pub fn inflight(self, index: usize) -> InFlightOneshot<D, T> {
         let handle = CONTEXT
             .with(|x| x.handle())
@@ -213,6 +214,7 @@ pub(crate) enum Lifecycle {
 
     /// The submitter no longer has interest in the operation result. The state
     /// must be passed to the driver and held until the operation completes.
+    #[allow(dead_code)]
     Ignored(Box<dyn std::any::Any>),
 
     /// The operation has completed with a single cqe result

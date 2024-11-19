@@ -124,7 +124,7 @@ impl DirBuilder {
     // recursion when only the first level of the directory needs to be built. For now, this serves
     // its purpose.
 
-    fn recurse_create_dir_all<'a>(&'a self, path: &'a Path) -> LocalBoxFuture<io::Result<()>> {
+    fn recurse_create_dir_all<'a>(&'a self, path: &'a Path) -> LocalBoxFuture<'a, io::Result<()>> {
         Box::pin(async move {
             if path == Path::new("") {
                 return Ok(());
