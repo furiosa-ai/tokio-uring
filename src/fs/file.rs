@@ -4,7 +4,7 @@ use crate::fs::OpenOptions;
 use crate::io::SharedFd;
 
 use crate::runtime::driver::op::Op;
-use crate::{UnsubmittedOneshot, UnsubmittedWrite};
+use crate::{UnsubmittedOneshot, UnsubmittedWrite, UnsubmittedRead};
 use std::fmt;
 use std::io;
 use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd, RawFd};
@@ -541,6 +541,11 @@ impl File {
     /// [`Ok(n)`]: Ok
     pub fn write_at<T: BoundedBuf>(&self, buf: T, pos: u64) -> UnsubmittedWrite<T> {
         UnsubmittedOneshot::write_at(&self.fd, buf, pos)
+    }
+
+	#[allow(missing_docs)]
+    pub fn unsubmitted_read_at<T: BoundedBufMut>(&self, buf: T, pos: u64) -> UnsubmittedRead<T> {
+        UnsubmittedOneshot::read_at(&self.fd, buf, pos)
     }
 
     /// Attempts to write an entire buffer into this file at the specified offset.

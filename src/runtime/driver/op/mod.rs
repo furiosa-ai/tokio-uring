@@ -4,6 +4,7 @@ use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::{Context, Poll, Waker};
 
+use io_uring::squeue::Flags;
 use io_uring::{cqueue, squeue};
 
 mod slab_list;
@@ -59,6 +60,12 @@ impl<D, T: OneshotOutputTransform<StoredData = D>> UnsubmittedOneshot<D, T> {
         };
 
         InFlightOneshot { inner: Some(inner) }
+    }
+
+	#[allow(missing_docs)]
+    pub fn set_link(mut self) -> Self {
+        self.sqe = self.sqe.flags(Flags::IO_LINK);
+        self
     }
 }
 
@@ -165,6 +172,7 @@ pub(crate) enum Lifecycle {
 
     /// The submitter no longer has interest in the operation result. The state
     /// must be passed to the driver and held until the operation completes.
+    #[allow(dead_code)]
     Ignored(Box<dyn std::any::Any>),
 
     /// The operation has completed with a single cqe result
