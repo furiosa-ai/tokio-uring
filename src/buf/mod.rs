@@ -79,6 +79,12 @@ impl Debug for Buffer {
     }
 }
 
+impl<B: BufferImpl> From<B> for Buffer {
+    fn from(value: B) -> Self {
+        Buffer::new(value)
+    }
+}
+
 impl Buffer {
     #[allow(missing_docs)]
     pub fn new<B: BufferImpl>(buf: B) -> Self {
