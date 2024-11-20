@@ -50,14 +50,13 @@ where
                         // pointer contains a raw pointer of type `RegistryInfo`, so this raw pointer casting is safe.
                         unsafe {
                             let registry_info =
-                                read_fixed.buf.get_buf().user_data()[0] as *const RegistryInfo;
+                                read_fixed.buf.get_buf().user_data() as *const RegistryInfo;
                             (*registry_info).index
                         }
                     } else if buf_type == TypeId::of::<pool::FixedBuf>() {
                         // Safety: This raw pointer casting is also safe as above.
                         unsafe {
-                            let pool_info =
-                                read_fixed.buf.get_buf().user_data()[0] as *const PoolInfo;
+                            let pool_info = read_fixed.buf.get_buf().user_data() as *const PoolInfo;
                             (*pool_info).index
                         }
                     } else {

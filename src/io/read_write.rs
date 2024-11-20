@@ -1,5 +1,7 @@
 use libc::iovec;
 
+use crate::buf::fixed::pool::PoolInfo;
+use crate::buf::fixed::registry::RegistryInfo;
 use crate::buf::fixed::{pool, registry};
 use crate::buf::{BoundedBufMut, Buffer};
 use crate::WithBuffer;
@@ -61,10 +63,25 @@ impl Unsubmitted {
 
         let sqe = if buf.len() == 1 {
             // Fixed buffer io not support vectored io
-            if buf.type_id() == TypeId::of::<registry::FixedBuf>()
-                || buf.type_id() == TypeId::of::<pool::FixedBuf>()
-            {
-                let buf_index = buf.user_data()[0] as u16;
+
+            // Get buf_index from raw pointer
+            if buf.type_id() == TypeId::of::<registry::FixedBuf>() {
+                // Safety: The condition above indicates that the source of buffer is `registry::FixedBuf`.
+                // According to the `BufferImpl` implementation for `registry::FixedBuf`, the user_data
+                // pointer contains a raw pointer of type `RegistryInfo`, so this raw pointer casting is safe.
+                let buf_index = unsafe {
+                    let registry_info = buf.user_data() as *const RegistryInfo;
+                    (*registry_info).index
+                };
+                opcode::WriteFixed::new(types::Fd(fd.raw_fd()), ptr, len as _, buf_index)
+                    .offset(offset as _)
+                    .build()
+            } else if buf.type_id() == TypeId::of::<pool::FixedBuf>() {
+                // Safety: This raw pointer casting is also safe as above.
+                let buf_index = unsafe {
+                    let pool_info = buf.user_data() as *const PoolInfo;
+                    (*pool_info).index
+                };
                 opcode::WriteFixed::new(types::Fd(fd.raw_fd()), ptr, len as _, buf_index)
                     .offset(offset as _)
                     .build()
@@ -98,10 +115,25 @@ impl Unsubmitted {
 
         let sqe = if buf.len() == 1 {
             // Fixed buffer io not support vectored io
-            if buf.type_id() == TypeId::of::<registry::FixedBuf>()
-                || buf.type_id() == TypeId::of::<pool::FixedBuf>()
-            {
-                let buf_index = buf.user_data()[0] as u16;
+
+            // Get buf_index from raw pointer
+            if buf.type_id() == TypeId::of::<registry::FixedBuf>() {
+                // Safety: The condition above indicates that the source of buffer is `registry::FixedBuf`.
+                // According to the `BufferImpl` implementation for `registry::FixedBuf`, the user_data
+                // pointer contains a raw pointer of type `RegistryInfo`, so this raw pointer casting is safe.
+                let buf_index = unsafe {
+                    let registry_info = buf.user_data() as *const RegistryInfo;
+                    (*registry_info).index
+                };
+                opcode::ReadFixed::new(types::Fd(fd.raw_fd()), ptr, len as _, buf_index)
+                    .offset(offset as _)
+                    .build()
+            } else if buf.type_id() == TypeId::of::<pool::FixedBuf>() {
+                // Safety: This raw pointer casting is also safe as above.
+                let buf_index = unsafe {
+                    let pool_info = buf.user_data() as *const PoolInfo;
+                    (*pool_info).index
+                };
                 opcode::ReadFixed::new(types::Fd(fd.raw_fd()), ptr, len as _, buf_index)
                     .offset(offset as _)
                     .build()

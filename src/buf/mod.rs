@@ -47,21 +47,21 @@ pub(crate) fn deref_mut(buf: &mut impl IoBufMut) -> &mut [u8] {
 pub unsafe trait BufferImpl: Any {
     type UserData: Send + Sync + 'static;
 
-    fn dtor() -> Box<dyn Fn(*mut u8, usize, *mut ())>;
-    fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Vec<Self::UserData>);
+    fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Self::UserData);
     /// # Safety
     /// `from_raw_parts(into_raw_parts(buf))` must be equal to `buf`
-    unsafe fn from_raw_parts(ptr: Vec<*mut u8>, len: Vec<usize>, user: Vec<Self::UserData>)
+    unsafe fn from_raw_parts(ptr: Vec<*mut u8>, len: Vec<usize>, user_data: Self::UserData)
         -> Self;
 }
 
 #[allow(missing_docs)]
 pub struct Buffer {
     iovecs: Vec<libc::iovec>,
-    user_data: Vec<*mut ()>,
+    user_data: *mut (),
     ty: TypeId,
     // SAFETY: Buffer cannot be used after execute `dtor`
-    dtor: Box<dyn Fn(*mut u8, usize, *mut ())>,
+    #[allow(clippy::type_complexity)]
+    dtor: Option<Box<dyn FnOnce(Vec<*mut u8>, Vec<usize>, *mut ())>>,
 }
 
 unsafe impl Send for Buffer {}
@@ -98,15 +98,15 @@ impl Buffer {
                 iov_len: len,
             })
             .collect();
-        let user_data = user_data
-            .into_iter()
-            .map(|user| Box::into_raw(Box::new(user)) as _)
-            .collect();
+        let user_data = Box::into_raw(Box::new(user_data)) as _;
         Self {
             iovecs,
             user_data,
             ty,
-            dtor: B::dtor(),
+            dtor: Some(Box::new(|ptr, len, user_data| unsafe {
+                let user_data = Box::from_raw(user_data as *mut B::UserData);
+                drop(B::from_raw_parts(ptr, len, *user_data));
+            })),
         }
     }
 
@@ -119,17 +119,13 @@ impl Buffer {
 
         unsafe {
             let this = ManuallyDrop::new(self);
-            let user = this
-                .user_data
-                .iter()
-                .map(|user| *Box::from_raw(*user as *mut B::UserData))
-                .collect();
+            let user_data = Box::from_raw(this.user_data as *mut B::UserData);
             let (ptrs, lens) = this
                 .iovecs
                 .iter()
                 .map(|iovec| (iovec.iov_base as *mut u8, iovec.iov_len))
                 .collect();
-            let buf = B::from_raw_parts(ptrs, lens, user);
+            let buf = B::from_raw_parts(ptrs, lens, *user_data);
             Ok(buf)
         }
     }
@@ -151,8 +147,8 @@ impl Buffer {
         self.iovecs.iter()
     }
 
-    pub(crate) fn user_data(&self) -> &Vec<*mut ()> {
-        &self.user_data
+    pub(crate) fn user_data(&self) -> *mut () {
+        self.user_data
     }
 
     pub(crate) fn type_id(&self) -> TypeId {
@@ -162,12 +158,13 @@ impl Buffer {
 
 impl Drop for Buffer {
     fn drop(&mut self) {
-        for i in 0..self.iovecs.len() {
-            let ptr = self.iovecs[i].iov_base as *mut u8;
-            let len = self.iovecs[i].iov_len;
-            let user = self.user_data[i];
-            (self.dtor)(ptr, len, user);
-        }
+        let dtor = self.dtor.take().unwrap();
+        let (ptr, len) = self
+            .iovecs
+            .iter()
+            .map(|iovec| (iovec.iov_base as *mut u8, iovec.iov_len))
+            .collect();
+        dtor(ptr, len, self.user_data);
     }
 }
 
@@ -222,24 +219,14 @@ unsafe impl IoBufMut for Buffer {
 unsafe impl BufferImpl for Vec<u8> {
     type UserData = ();
 
-    fn dtor() -> Box<dyn Fn(*mut u8, usize, *mut ())> {
-        Box::new(|ptr: *mut u8, len: usize, _user: *mut ()| unsafe {
-            let _ = Vec::from_raw_parts(ptr, len, len);
-        })
-    }
-
-    fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Vec<Self::UserData>) {
+    fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Self::UserData) {
         let mut this = ManuallyDrop::new(self);
         let ptr = this.as_mut_ptr() as _;
         let cap = this.capacity();
-        (vec![ptr], vec![cap], vec![()])
+        (vec![ptr], vec![cap], ())
     }
 
-    unsafe fn from_raw_parts(
-        ptr: Vec<*mut u8>,
-        len: Vec<usize>,
-        _user: Vec<Self::UserData>,
-    ) -> Self {
+    unsafe fn from_raw_parts(ptr: Vec<*mut u8>, len: Vec<usize>, _user: Self::UserData) -> Self {
         Vec::from_raw_parts(ptr[0], len[0], len[0])
     }
 }
@@ -247,29 +234,18 @@ unsafe impl BufferImpl for Vec<u8> {
 unsafe impl BufferImpl for Vec<Vec<u8>> {
     type UserData = ();
 
-    fn dtor() -> Box<dyn Fn(*mut u8, usize, *mut ())> {
-        Box::new(|ptr: *mut u8, len: usize, _user: *mut ()| unsafe {
-            let _ = Vec::from_raw_parts(ptr, len, len);
-        })
-    }
-
-    fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Vec<Self::UserData>) {
+    fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Self::UserData) {
         let mut ptr = Vec::with_capacity(self.len());
         let mut cap = Vec::with_capacity(self.len());
-        let user = std::iter::repeat(()).take(self.len()).collect();
         for vec in self.into_iter() {
             let mut this = ManuallyDrop::new(vec);
             ptr.push(this.as_mut_ptr() as _);
             cap.push(this.capacity());
         }
-        (ptr, cap, user)
+        (ptr, cap, ())
     }
 
-    unsafe fn from_raw_parts(
-        ptr: Vec<*mut u8>,
-        len: Vec<usize>,
-        _user: Vec<Self::UserData>,
-    ) -> Self {
+    unsafe fn from_raw_parts(ptr: Vec<*mut u8>, len: Vec<usize>, _user: Self::UserData) -> Self {
         let mut vec = Vec::with_capacity(ptr.len());
         for (p, l) in ptr.into_iter().zip(len) {
             vec.push(Vec::from_raw_parts(p, l, l));

@@ -12,6 +12,7 @@ use crate::buf::BufferImpl;
 use crate::runtime::CONTEXT;
 use crate::Buffer;
 use std::io;
+use std::mem::ManuallyDrop;
 use std::sync::{Arc, Mutex};
 
 /// An indexed collection of I/O buffers pre-registered with the kernel.
@@ -194,30 +195,19 @@ pub(crate) struct RegistryInfo {
 unsafe impl BufferImpl for FixedBuf {
     type UserData = RegistryInfo;
 
-    fn dtor() -> Box<dyn Fn(*mut u8, usize, *mut ())> {
-        Box::new(|_ptr: *mut u8, _len: usize, user: *mut ()| unsafe {
-            let registry_info = Box::from_raw(user as *mut RegistryInfo);
-            let mut registry = registry_info.registry.lock().unwrap();
-            registry.check_in(registry_info.index as usize);
-        })
-    }
-
-    fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Vec<Self::UserData>) {
-        let FixedBuf {
-            iovec,
-            registry_info,
-        } = self;
+    fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Self::UserData) {
+        let this = ManuallyDrop::new(self);
         (
-            vec![iovec.iov_base as _],
-            vec![iovec.iov_len],
-            vec![registry_info],
+            vec![this.iovec.iov_base as _],
+            vec![this.iovec.iov_len],
+            this.registry_info.clone(),
         )
     }
 
     unsafe fn from_raw_parts(
         ptr: Vec<*mut u8>,
         len: Vec<usize>,
-        user: Vec<Self::UserData>,
+        user_data: Self::UserData,
     ) -> Self {
         let iovec = libc::iovec {
             iov_base: ptr[0] as _,
@@ -225,7 +215,14 @@ unsafe impl BufferImpl for FixedBuf {
         };
         FixedBuf {
             iovec,
-            registry_info: user[0].clone(),
+            registry_info: user_data,
         }
+    }
+}
+
+impl Drop for FixedBuf {
+    fn drop(&mut self) {
+        let mut registry = self.registry_info.registry.lock().unwrap();
+        registry.check_in(self.registry_info.index as usize);
     }
 }
