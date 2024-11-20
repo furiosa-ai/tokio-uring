@@ -194,15 +194,17 @@ pub(crate) struct RegistryInfo {
 unsafe impl BufferImpl for FixedBuf {
     type UserData = RegistryInfo;
 
-    fn dtor() -> Box<dyn Fn(*mut u8, usize, *mut ())> {
-        Box::new(|_ptr: *mut u8, _len: usize, user: *mut ()| unsafe {
-            let registry_info = Box::from_raw(user as *mut RegistryInfo);
-            let mut registry = registry_info.registry.lock().unwrap();
-            registry.check_in(registry_info.index as usize);
-        })
+    fn dtor() -> Box<dyn FnOnce(Vec<*mut u8>, Vec<usize>, *mut ())> {
+        Box::new(
+            |_ptr: Vec<*mut u8>, _len: Vec<usize>, user_data: *mut ()| unsafe {
+                let registry_info = Box::from_raw(user_data as *mut RegistryInfo);
+                let mut registry = registry_info.registry.lock().unwrap();
+                registry.check_in(registry_info.index as usize);
+            },
+        )
     }
 
-    fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Vec<Self::UserData>) {
+    fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Self::UserData) {
         let FixedBuf {
             iovec,
             registry_info,
@@ -210,14 +212,14 @@ unsafe impl BufferImpl for FixedBuf {
         (
             vec![iovec.iov_base as _],
             vec![iovec.iov_len],
-            vec![registry_info],
+            registry_info,
         )
     }
 
     unsafe fn from_raw_parts(
         ptr: Vec<*mut u8>,
         len: Vec<usize>,
-        user: Vec<Self::UserData>,
+        user_data: Self::UserData,
     ) -> Self {
         let iovec = libc::iovec {
             iov_base: ptr[0] as _,
@@ -225,7 +227,7 @@ unsafe impl BufferImpl for FixedBuf {
         };
         FixedBuf {
             iovec,
-            registry_info: user[0].clone(),
+            registry_info: user_data,
         }
     }
 }

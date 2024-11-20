@@ -300,27 +300,25 @@ pub(crate) struct PoolInfo {
 unsafe impl BufferImpl for FixedBuf {
     type UserData = PoolInfo;
 
-    fn dtor() -> Box<dyn Fn(*mut u8, usize, *mut ())> {
-        Box::new(|_ptr: *mut u8, _len: usize, user: *mut ()| unsafe {
-            let pool_info = Box::from_raw(user as *mut PoolInfo);
-            let mut pool = pool_info.pool.lock().unwrap();
-            pool.check_in(pool_info.index as usize);
-        })
+    fn dtor() -> Box<dyn FnOnce(Vec<*mut u8>, Vec<usize>, *mut ())> {
+        Box::new(
+            |_ptr: Vec<*mut u8>, _len: Vec<usize>, user_data: *mut ()| unsafe {
+                let pool_info = Box::from_raw(user_data as *mut PoolInfo);
+                let mut pool = pool_info.pool.lock().unwrap();
+                pool.check_in(pool_info.index as usize);
+            },
+        )
     }
 
-    fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Vec<Self::UserData>) {
+    fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Self::UserData) {
         let FixedBuf { iovec, pool_info } = self;
-        (
-            vec![iovec.iov_base as _],
-            vec![iovec.iov_len],
-            vec![pool_info],
-        )
+        (vec![iovec.iov_base as _], vec![iovec.iov_len], pool_info)
     }
 
     unsafe fn from_raw_parts(
         ptr: Vec<*mut u8>,
         len: Vec<usize>,
-        user: Vec<Self::UserData>,
+        user_data: Self::UserData,
     ) -> Self {
         let iovec = libc::iovec {
             iov_base: ptr[0] as _,
@@ -328,7 +326,7 @@ unsafe impl BufferImpl for FixedBuf {
         };
         FixedBuf {
             iovec,
-            pool_info: user[0].clone(),
+            pool_info: user_data,
         }
     }
 }
