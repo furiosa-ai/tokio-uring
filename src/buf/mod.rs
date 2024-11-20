@@ -67,14 +67,12 @@ pub struct Buffer {
 unsafe impl Send for Buffer {}
 unsafe impl Sync for Buffer {}
 
-// FIXME
 impl Debug for Buffer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Buffer")
             .field("iovecs", &self.iovecs)
             .field("user", &self.user_data)
             .field("ty", &self.ty)
-            // .field("dtor", &self.dtor)
             .finish()
     }
 }
@@ -217,38 +215,41 @@ unsafe impl IoBufMut for Buffer {
 }
 
 unsafe impl BufferImpl for Vec<u8> {
-    type UserData = ();
+    type UserData = usize;
 
     fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Self::UserData) {
         let mut this = ManuallyDrop::new(self);
         let ptr = this.as_mut_ptr() as _;
+        let len = this.len();
         let cap = this.capacity();
-        (vec![ptr], vec![cap], ())
+        (vec![ptr], vec![len], cap)
     }
 
-    unsafe fn from_raw_parts(ptr: Vec<*mut u8>, len: Vec<usize>, _user: Self::UserData) -> Self {
-        Vec::from_raw_parts(ptr[0], len[0], len[0])
+    unsafe fn from_raw_parts(ptr: Vec<*mut u8>, len: Vec<usize>, user: Self::UserData) -> Self {
+        Vec::from_raw_parts(ptr[0], len[0], user)
     }
 }
 
 unsafe impl BufferImpl for Vec<Vec<u8>> {
-    type UserData = ();
+    type UserData = Vec<usize>;
 
     fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Self::UserData) {
         let mut ptr = Vec::with_capacity(self.len());
+        let mut len = Vec::with_capacity(self.len());
         let mut cap = Vec::with_capacity(self.len());
         for vec in self.into_iter() {
             let mut this = ManuallyDrop::new(vec);
             ptr.push(this.as_mut_ptr() as _);
+            len.push(this.len());
             cap.push(this.capacity());
         }
-        (ptr, cap, ())
+        (ptr, len, cap)
     }
 
-    unsafe fn from_raw_parts(ptr: Vec<*mut u8>, len: Vec<usize>, _user: Self::UserData) -> Self {
+    unsafe fn from_raw_parts(ptr: Vec<*mut u8>, len: Vec<usize>, user: Self::UserData) -> Self {
         let mut vec = Vec::with_capacity(ptr.len());
-        for (p, l) in ptr.into_iter().zip(len) {
-            vec.push(Vec::from_raw_parts(p, l, l));
+        for ((p, len), cap) in ptr.into_iter().zip(len).zip(user) {
+            vec.push(Vec::from_raw_parts(p, len, cap));
         }
         vec
     }
