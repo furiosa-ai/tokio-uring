@@ -18,6 +18,7 @@ use tokio::pin;
 use tokio::sync::Notify;
 
 use std::io;
+use std::mem::ManuallyDrop;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -300,19 +301,13 @@ pub(crate) struct PoolInfo {
 unsafe impl BufferImpl for FixedBuf {
     type UserData = PoolInfo;
 
-    fn dtor() -> Box<dyn FnOnce(Vec<*mut u8>, Vec<usize>, *mut ())> {
-        Box::new(
-            |_ptr: Vec<*mut u8>, _len: Vec<usize>, user_data: *mut ()| unsafe {
-                let pool_info = Box::from_raw(user_data as *mut PoolInfo);
-                let mut pool = pool_info.pool.lock().unwrap();
-                pool.check_in(pool_info.index as usize);
-            },
-        )
-    }
-
     fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Self::UserData) {
-        let FixedBuf { iovec, pool_info } = self;
-        (vec![iovec.iov_base as _], vec![iovec.iov_len], pool_info)
+        let this = ManuallyDrop::new(self);
+        (
+            vec![this.iovec.iov_base as _],
+            vec![this.iovec.iov_len],
+            this.pool_info.clone(),
+        )
     }
 
     unsafe fn from_raw_parts(
@@ -328,5 +323,12 @@ unsafe impl BufferImpl for FixedBuf {
             iovec,
             pool_info: user_data,
         }
+    }
+}
+
+impl Drop for FixedBuf {
+    fn drop(&mut self) {
+        let mut pool = self.pool_info.pool.lock().unwrap();
+        pool.check_in(self.pool_info.index as usize);
     }
 }

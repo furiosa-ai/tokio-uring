@@ -47,8 +47,6 @@ pub(crate) fn deref_mut(buf: &mut impl IoBufMut) -> &mut [u8] {
 pub unsafe trait BufferImpl: Any {
     type UserData: Send + Sync + 'static;
 
-    #[allow(clippy::type_complexity)]
-    fn dtor() -> Box<dyn FnOnce(Vec<*mut u8>, Vec<usize>, *mut ())>;
     fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Self::UserData);
     /// # Safety
     /// `from_raw_parts(into_raw_parts(buf))` must be equal to `buf`
@@ -105,7 +103,10 @@ impl Buffer {
             iovecs,
             user_data,
             ty,
-            dtor: Some(B::dtor()),
+            dtor: Some(Box::new(|ptr, len, user_data| unsafe {
+                let user_data = Box::from_raw(user_data as *mut B::UserData);
+                drop(B::from_raw_parts(ptr, len, *user_data));
+            })),
         }
     }
 
@@ -218,14 +219,6 @@ unsafe impl IoBufMut for Buffer {
 unsafe impl BufferImpl for Vec<u8> {
     type UserData = ();
 
-    fn dtor() -> Box<dyn FnOnce(Vec<*mut u8>, Vec<usize>, *mut ())> {
-        Box::new(
-            |ptr: Vec<*mut u8>, len: Vec<usize>, _user_data: *mut ()| unsafe {
-                let _: Self = BufferImpl::from_raw_parts(ptr, len, ());
-            },
-        )
-    }
-
     fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Self::UserData) {
         let mut this = ManuallyDrop::new(self);
         let ptr = this.as_mut_ptr() as _;
@@ -240,14 +233,6 @@ unsafe impl BufferImpl for Vec<u8> {
 
 unsafe impl BufferImpl for Vec<Vec<u8>> {
     type UserData = ();
-
-    fn dtor() -> Box<dyn FnOnce(Vec<*mut u8>, Vec<usize>, *mut ())> {
-        Box::new(
-            |ptr: Vec<*mut u8>, len: Vec<usize>, _user_data: *mut ()| unsafe {
-                let _: Self = BufferImpl::from_raw_parts(ptr, len, ());
-            },
-        )
-    }
 
     fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Self::UserData) {
         let mut ptr = Vec::with_capacity(self.len());
