@@ -140,6 +140,11 @@ impl Buffer {
         self.len() == 0
     }
 
+    #[allow(missing_docs)]
+    pub fn iter(&self) -> std::slice::Iter<'_, libc::iovec> {
+        self.iovecs.iter()
+    }
+
     pub(crate) fn user_data(&self) -> &Vec<*mut ()> {
         &self.user_data
     }
