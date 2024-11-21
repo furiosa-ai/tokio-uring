@@ -56,7 +56,7 @@ impl FixedBufRegistry {
     /// using the buffer takes ownership of it and returns it once completed,
     /// preventing shared use of the buffer while the operation is in flight.
     pub fn check_out(&self, index: usize) -> Option<Buffer> {
-        let (iovec, cap) = {
+        let (iovec, init_len) = {
             let mut inner = self.inner.lock().unwrap();
             inner.check_out(index)?
         };
@@ -67,7 +67,7 @@ impl FixedBufRegistry {
         };
         let buf = FixedBuf {
             iovec,
-            cap,
+            init_len,
             registry_info,
         };
 
@@ -116,7 +116,7 @@ impl FixedBufRegistry {
 /// # let BUF_SIZE = 4096;
 ///
 /// tokio_uring::start(async {
-///     let registry = registry::register(iter::repeat(Vec::with_capacity(BUF_SIZE)).take(NUM_BUFFERS).collect())?;
+///     let registry = registry::register(iter::repeat(Vec::with_capacity(BUF_SIZE)).take(NUM_BUFFERS))?;
 ///     // ...
 ///     Ok(())
 /// })
@@ -137,7 +137,7 @@ impl FixedBufRegistry {
 /// # let BUF_SIZE = 4096;
 ///
 /// tokio_uring::start(async {
-///     let registry = registry::register(iter::repeat_with(|| Vec::with_capacity(BUF_SIZE)).take(NUM_BUFFERS).collect())?;
+///     let registry = registry::register(iter::repeat_with(|| Vec::with_capacity(BUF_SIZE)).take(NUM_BUFFERS))?;
 ///     // ...
 ///     Ok(())
 /// })
@@ -184,7 +184,7 @@ pub fn unregister() -> io::Result<()> {
 
 pub(crate) struct FixedBuf {
     pub iovec: libc::iovec,
-    pub cap: usize,
+    pub init_len: usize,
     pub registry_info: RegistryInfo,
 }
 
@@ -201,8 +201,8 @@ unsafe impl BufferImpl for FixedBuf {
         let this = ManuallyDrop::new(self);
         (
             vec![this.iovec.iov_base as _],
+            vec![this.init_len],
             vec![this.iovec.iov_len],
-            vec![this.cap],
             this.registry_info.clone(),
         )
     }
@@ -215,11 +215,11 @@ unsafe impl BufferImpl for FixedBuf {
     ) -> Self {
         let iovec = libc::iovec {
             iov_base: ptr[0] as _,
-            iov_len: len[0],
+            iov_len: cap[0],
         };
         FixedBuf {
             iovec,
-            cap: cap[0],
+            init_len: len[0],
             registry_info: user_data,
         }
     }
@@ -228,6 +228,6 @@ unsafe impl BufferImpl for FixedBuf {
 impl Drop for FixedBuf {
     fn drop(&mut self) {
         let mut registry = self.registry_info.registry.lock().unwrap();
-        registry.check_in(self.registry_info.index as usize);
+        registry.check_in(self.registry_info.index as usize, self.init_len);
     }
 }

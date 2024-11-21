@@ -114,7 +114,7 @@ impl FixedBufPool {
     /// An application should not rely on any particular order
     /// in which available buffers are retrieved.
     pub fn try_next(&self, cap: usize) -> Option<Buffer> {
-        let (iovec, index) = {
+        let (iovec, init_len, index) = {
             let mut inner = self.inner.lock().unwrap();
             inner.try_next(cap)?
         };
@@ -125,7 +125,7 @@ impl FixedBufPool {
         };
         let buf = FixedBuf {
             iovec,
-            cap,
+            init_len,
             pool_info,
         };
 
@@ -293,7 +293,7 @@ pub fn unregister() -> io::Result<()> {
 
 pub(crate) struct FixedBuf {
     iovec: libc::iovec,
-    cap: usize,
+    init_len: usize,
     pool_info: PoolInfo,
 }
 
@@ -310,8 +310,8 @@ unsafe impl BufferImpl for FixedBuf {
         let this = ManuallyDrop::new(self);
         (
             vec![this.iovec.iov_base as _],
+            vec![this.init_len],
             vec![this.iovec.iov_len],
-            vec![this.cap],
             this.pool_info.clone(),
         )
     }
@@ -324,11 +324,11 @@ unsafe impl BufferImpl for FixedBuf {
     ) -> Self {
         let iovec = libc::iovec {
             iov_base: ptr[0] as _,
-            iov_len: len[0],
+            iov_len: cap[0],
         };
         FixedBuf {
             iovec,
-            cap: cap[0],
+            init_len: len[0],
             pool_info: user_data,
         }
     }
@@ -337,6 +337,6 @@ unsafe impl BufferImpl for FixedBuf {
 impl Drop for FixedBuf {
     fn drop(&mut self) {
         let mut pool = self.pool_info.pool.lock().unwrap();
-        pool.check_in(self.pool_info.index as usize);
+        pool.check_in(self.pool_info.index as usize, self.init_len);
     }
 }

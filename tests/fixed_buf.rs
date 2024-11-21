@@ -82,9 +82,8 @@ fn unregister_invalidates_checked_out_buffers() {
 
         let fixed_buf = buffers.check_out(0).unwrap();
         let (n, buf) = file.read_fixed_at(fixed_buf, 0).await.unwrap();
-        let buf: Vec<u8> = buf.try_into().unwrap();
         assert_eq!(n, HELLO.len());
-        assert_eq!(&buf[..], HELLO);
+        assert_eq!(&buf[0][..], HELLO);
     });
 }
 

@@ -11,8 +11,6 @@ pub(crate) struct Pool {
     // the allocated buffers. The number of initialized records is the
     // same as the length of the states array.
     iovecs: Vec<libc::iovec>,
-    // Capacities of original buffer
-    caps: Vec<usize>,
     states: Vec<BufState>,
     // Table of head indices of the free buffer lists in each size bucket.
     free_buf_head_by_cap: HashMap<usize, u16>,
@@ -27,6 +25,8 @@ unsafe impl Sync for Pool {}
 enum BufState {
     // The buffer is not in use.
     Free {
+        // Actual length of vector.
+        init_len: usize,
         // Index of the next buffer of the same capacity in a free buffer list, if any.
         next: Option<u16>,
     },
@@ -46,30 +46,29 @@ impl Pool {
         // to avoid an allocation.
         let buffers = bufs.collect::<Vec<_>>();
         let mut iovecs = Vec::with_capacity(buffers.len());
-        let mut caps = Vec::with_capacity(buffers.len());
         let mut states = Vec::with_capacity(buffers.len());
         let mut free_buf_head_by_cap = HashMap::new();
         for (i, buf) in buffers.into_iter().enumerate() {
             let mut buf = ManuallyDrop::new(buf);
             let iovec = libc::iovec {
                 iov_base: buf.as_mut_ptr() as _,
-                iov_len: buf.len(),
+                iov_len: buf.capacity(),
             };
             iovecs.push(iovec);
-            caps.push(buf.capacity());
 
             // Link the buffer as the head of the free list for its capacity.
             // This constructs the free buffer list to be initially retrieved
             // back to front, which should be of no difference to the user.
             let next = free_buf_head_by_cap.insert(buf.capacity(), i as u16);
-            states.push(BufState::Free { next });
+            states.push(BufState::Free {
+                init_len: buf.len(),
+                next,
+            });
         }
         debug_assert_eq!(iovecs.len(), states.len());
-        debug_assert_eq!(iovecs.len(), caps.len());
 
         Pool {
             iovecs,
-            caps,
             states,
             free_buf_head_by_cap,
             notify_next_by_cap: HashMap::new(),
@@ -82,11 +81,11 @@ impl Pool {
 
     // If the free buffer list for this capacity is not empty, checks out the first buffer
     // from the list and returns its data. Otherwise, returns None.
-    pub(crate) fn try_next(&mut self, cap: usize) -> Option<(libc::iovec, usize)> {
+    pub(crate) fn try_next(&mut self, cap: usize) -> Option<(libc::iovec, usize, usize)> {
         let free_head = self.free_buf_head_by_cap.get_mut(&cap)?;
         let index = *free_head as usize;
         let state = self.states.get_mut(index).expect("invalid buffer index");
-        let BufState::Free { next } = *state else {
+        let BufState::Free { init_len, next } = *state else {
             panic!("buffer is checked out")
         };
         *state = BufState::CheckedOut;
@@ -103,7 +102,7 @@ impl Pool {
 
         let iovec = self.iovecs[index];
 
-        Some((iovec, index))
+        Some((iovec, init_len, index))
     }
 
     // Returns a `Notify` to use for waking up tasks awaiting a buffer of
@@ -113,8 +112,8 @@ impl Pool {
         Arc::clone(notify)
     }
 
-    pub(crate) fn check_in(&mut self, index: usize) {
-        let cap = self.caps[index];
+    pub(crate) fn check_in(&mut self, index: usize, init_len: usize) {
+        let cap = self.iovecs[index].iov_len;
         let state = &mut self.states[index];
         debug_assert!(
             matches!(state, BufState::CheckedOut),
@@ -126,7 +125,7 @@ impl Pool {
         // improving cache locality.
         let next = self.free_buf_head_by_cap.insert(cap, index as u16);
 
-        *state = BufState::Free { next };
+        *state = BufState::Free { init_len, next };
 
         if let Some(notify) = self.notify_next_by_cap.get(&cap) {
             // Wake up a single task pending on `next`
@@ -139,14 +138,14 @@ impl Drop for Pool {
     fn drop(&mut self) {
         for (i, state) in self.states.iter().enumerate() {
             match state {
-                BufState::Free { .. } => {
+                BufState::Free { init_len, .. } => {
                     // Update buffer initialization.
                     // The origin Vec<u8>s are dropped here.
                     let _ = unsafe {
                         Vec::from_raw_parts(
                             self.iovecs[i].iov_base as _,
+                            *init_len,
                             self.iovecs[i].iov_len,
-                            self.caps[i],
                         )
                     };
                 }
