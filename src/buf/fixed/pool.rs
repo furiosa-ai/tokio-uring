@@ -114,7 +114,7 @@ impl FixedBufPool {
     /// An application should not rely on any particular order
     /// in which available buffers are retrieved.
     pub fn try_next(&self, cap: usize) -> Option<Buffer> {
-        let (iovec, index) = {
+        let (iovec, init_len, index) = {
             let mut inner = self.inner.lock().unwrap();
             inner.try_next(cap)?
         };
@@ -123,7 +123,11 @@ impl FixedBufPool {
             pool: self.inner.clone(),
             index: index as u16,
         };
-        let buf = FixedBuf { iovec, pool_info };
+        let buf = FixedBuf {
+            iovec,
+            init_len,
+            pool_info,
+        };
 
         Some(Buffer::new(buf))
     }
@@ -289,6 +293,7 @@ pub fn unregister() -> io::Result<()> {
 
 pub(crate) struct FixedBuf {
     iovec: libc::iovec,
+    init_len: usize,
     pool_info: PoolInfo,
 }
 
@@ -301,10 +306,11 @@ pub(crate) struct PoolInfo {
 unsafe impl BufferImpl for FixedBuf {
     type UserData = PoolInfo;
 
-    fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Self::UserData) {
+    fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Vec<usize>, Self::UserData) {
         let this = ManuallyDrop::new(self);
         (
             vec![this.iovec.iov_base as _],
+            vec![this.init_len],
             vec![this.iovec.iov_len],
             this.pool_info.clone(),
         )
@@ -313,14 +319,16 @@ unsafe impl BufferImpl for FixedBuf {
     unsafe fn from_raw_parts(
         ptr: Vec<*mut u8>,
         len: Vec<usize>,
+        cap: Vec<usize>,
         user_data: Self::UserData,
     ) -> Self {
         let iovec = libc::iovec {
             iov_base: ptr[0] as _,
-            iov_len: len[0],
+            iov_len: cap[0],
         };
         FixedBuf {
             iovec,
+            init_len: len[0],
             pool_info: user_data,
         }
     }
@@ -329,6 +337,6 @@ unsafe impl BufferImpl for FixedBuf {
 impl Drop for FixedBuf {
     fn drop(&mut self) {
         let mut pool = self.pool_info.pool.lock().unwrap();
-        pool.check_in(self.pool_info.index as usize);
+        pool.check_in(self.pool_info.index as usize, self.init_len);
     }
 }

@@ -297,13 +297,12 @@ impl File {
     /// ```no_run
     ///# fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use tokio_uring::fs::File;
-    /// use tokio_uring::buf::fixed::FixedBufRegistry;
+    /// use tokio_uring::buf::fixed::registry;
     /// use tokio_uring::buf::BoundedBuf;
     /// use std::iter;
     ///
     /// tokio_uring::start(async {
-    ///     let registry = FixedBufRegistry::new(iter::repeat(vec![0; 10]).take(10));
-    ///     registry.register()?;
+    ///     let registry = registry::register(iter::repeat(vec![0; 10]).take(10))?;
     ///
     ///     let f = File::open("foo.txt").await?;
     ///     let buffer = registry.check_out(2).unwrap();
@@ -311,7 +310,7 @@ impl File {
     ///     // Read up to 10 bytes
     ///     let (n, buffer) = f.read_fixed_at(buffer, 0).await?;
     ///
-    ///     println!("The bytes: {:?}", &buffer[..n]);
+    ///     println!("The bytes: {:?}", &buffer[0][..n]);
     ///
     ///     // Close the file
     ///     f.close().await?;
@@ -395,12 +394,11 @@ impl File {
     /// ```no_run
     ///# fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use tokio_uring::fs::File;
-    /// use tokio_uring::buf::fixed::FixedBufRegistry;
+    /// use tokio_uring::buf::fixed::registry;
     /// use tokio_uring::buf::BoundedBuf;
     ///
     /// tokio_uring::start(async {
-    ///     let registry = FixedBufRegistry::new([b"some bytes".to_vec()]);
-    ///     registry.register()?;
+    ///     let registry = registry::register(vec![b"some bytes".to_vec()].into_iter())?;
     ///
     ///     let file = File::create("foo.txt").await?;
     ///
