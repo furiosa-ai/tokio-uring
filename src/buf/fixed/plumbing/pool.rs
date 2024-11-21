@@ -11,6 +11,8 @@ pub(crate) struct Pool {
     // the allocated buffers. The number of initialized records is the
     // same as the length of the states array.
     iovecs: Vec<libc::iovec>,
+    // Capacities of original buffer
+    caps: Vec<usize>,
     states: Vec<BufState>,
     // Table of head indices of the free buffer lists in each size bucket.
     free_buf_head_by_cap: HashMap<usize, u16>,
@@ -44,27 +46,30 @@ impl Pool {
         // to avoid an allocation.
         let buffers = bufs.collect::<Vec<_>>();
         let mut iovecs = Vec::with_capacity(buffers.len());
+        let mut caps = Vec::with_capacity(buffers.len());
         let mut states = Vec::with_capacity(buffers.len());
         let mut free_buf_head_by_cap = HashMap::new();
         for (i, buf) in buffers.into_iter().enumerate() {
             let mut buf = ManuallyDrop::new(buf);
-            let cap = buf.capacity();
             let iovec = libc::iovec {
                 iov_base: buf.as_mut_ptr() as _,
-                iov_len: cap,
+                iov_len: buf.len(),
             };
             iovecs.push(iovec);
+            caps.push(buf.capacity());
 
             // Link the buffer as the head of the free list for its capacity.
             // This constructs the free buffer list to be initially retrieved
             // back to front, which should be of no difference to the user.
-            let next = free_buf_head_by_cap.insert(cap, i as u16);
+            let next = free_buf_head_by_cap.insert(buf.capacity(), i as u16);
             states.push(BufState::Free { next });
         }
         debug_assert_eq!(iovecs.len(), states.len());
+        debug_assert_eq!(iovecs.len(), caps.len());
 
         Pool {
             iovecs,
+            caps,
             states,
             free_buf_head_by_cap,
             notify_next_by_cap: HashMap::new(),
@@ -109,7 +114,7 @@ impl Pool {
     }
 
     pub(crate) fn check_in(&mut self, index: usize) {
-        let cap = self.iovecs[index].iov_len;
+        let cap = self.caps[index];
         let state = &mut self.states[index];
         debug_assert!(
             matches!(state, BufState::CheckedOut),
@@ -141,7 +146,7 @@ impl Drop for Pool {
                         Vec::from_raw_parts(
                             self.iovecs[i].iov_base as _,
                             self.iovecs[i].iov_len,
-                            self.iovecs[i].iov_len,
+                            self.caps[i],
                         )
                     };
                 }

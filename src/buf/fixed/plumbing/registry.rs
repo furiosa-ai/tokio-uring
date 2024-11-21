@@ -6,6 +6,8 @@ pub(crate) struct Registry {
     // The number of initialized records is the same as the length
     // of the states array.
     iovecs: Vec<libc::iovec>,
+    // Capacities of original buffer
+    caps: Vec<usize>,
     // State information on the buffers. Indices in this array correspond to
     // the indices in the array at iovecs.
     states: Vec<BufState>,
@@ -34,20 +36,27 @@ impl Registry {
         // to avoid an allocation.
         let buffers = bufs.collect::<Vec<_>>();
         let mut iovecs = Vec::with_capacity(buffers.len());
+        let mut caps = Vec::with_capacity(buffers.len());
         let mut states = Vec::with_capacity(buffers.len());
         for buf in buffers.into_iter() {
             // Origin buffer will be dropped when Registry is dropped
             let mut buf = ManuallyDrop::new(buf);
             let iovec = libc::iovec {
                 iov_base: buf.as_mut_ptr() as _,
-                iov_len: buf.capacity(),
+                iov_len: buf.len(),
             };
             iovecs.push(iovec);
+            caps.push(buf.capacity());
             states.push(BufState::Free);
         }
         debug_assert_eq!(iovecs.len(), states.len());
+        debug_assert_eq!(iovecs.len(), caps.len());
 
-        Self { iovecs, states }
+        Self {
+            iovecs,
+            caps,
+            states,
+        }
     }
 
     pub(crate) fn iovecs(&self) -> &[libc::iovec] {
@@ -57,7 +66,7 @@ impl Registry {
     // If the indexed buffer is free, changes its state to checked out
     // and returns its data.
     // If the buffer is already checked out, returns None.
-    pub(crate) fn check_out(&mut self, index: usize) -> Option<libc::iovec> {
+    pub(crate) fn check_out(&mut self, index: usize) -> Option<(libc::iovec, usize)> {
         let state = self.states.get_mut(index).expect("invalid buffer index");
         if !matches!(state, BufState::Free) {
             return None;
@@ -66,7 +75,7 @@ impl Registry {
 
         let iovec = self.iovecs[index];
 
-        Some(iovec)
+        Some((iovec, self.caps[index]))
     }
 
     pub(crate) fn check_in(&mut self, index: usize) {
@@ -90,7 +99,7 @@ impl Drop for Registry {
                         Vec::from_raw_parts(
                             self.iovecs[i].iov_base as _,
                             self.iovecs[i].iov_len,
-                            self.iovecs[i].iov_len,
+                            self.caps[i],
                         )
                     };
                 }

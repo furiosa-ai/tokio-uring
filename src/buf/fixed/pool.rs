@@ -123,7 +123,11 @@ impl FixedBufPool {
             pool: self.inner.clone(),
             index: index as u16,
         };
-        let buf = FixedBuf { iovec, pool_info };
+        let buf = FixedBuf {
+            iovec,
+            cap,
+            pool_info,
+        };
 
         Some(Buffer::new(buf))
     }
@@ -289,6 +293,7 @@ pub fn unregister() -> io::Result<()> {
 
 pub(crate) struct FixedBuf {
     iovec: libc::iovec,
+    cap: usize,
     pool_info: PoolInfo,
 }
 
@@ -301,11 +306,12 @@ pub(crate) struct PoolInfo {
 unsafe impl BufferImpl for FixedBuf {
     type UserData = PoolInfo;
 
-    fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Self::UserData) {
+    fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Vec<usize>, Self::UserData) {
         let this = ManuallyDrop::new(self);
         (
             vec![this.iovec.iov_base as _],
             vec![this.iovec.iov_len],
+            vec![this.cap],
             this.pool_info.clone(),
         )
     }
@@ -313,6 +319,7 @@ unsafe impl BufferImpl for FixedBuf {
     unsafe fn from_raw_parts(
         ptr: Vec<*mut u8>,
         len: Vec<usize>,
+        cap: Vec<usize>,
         user_data: Self::UserData,
     ) -> Self {
         let iovec = libc::iovec {
@@ -321,6 +328,7 @@ unsafe impl BufferImpl for FixedBuf {
         };
         FixedBuf {
             iovec,
+            cap: cap[0],
             pool_info: user_data,
         }
     }

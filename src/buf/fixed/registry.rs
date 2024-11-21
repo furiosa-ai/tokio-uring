@@ -56,7 +56,7 @@ impl FixedBufRegistry {
     /// using the buffer takes ownership of it and returns it once completed,
     /// preventing shared use of the buffer while the operation is in flight.
     pub fn check_out(&self, index: usize) -> Option<Buffer> {
-        let iovec = {
+        let (iovec, cap) = {
             let mut inner = self.inner.lock().unwrap();
             inner.check_out(index)?
         };
@@ -67,6 +67,7 @@ impl FixedBufRegistry {
         };
         let buf = FixedBuf {
             iovec,
+            cap,
             registry_info,
         };
 
@@ -183,6 +184,7 @@ pub fn unregister() -> io::Result<()> {
 
 pub(crate) struct FixedBuf {
     pub iovec: libc::iovec,
+    pub cap: usize,
     pub registry_info: RegistryInfo,
 }
 
@@ -195,11 +197,12 @@ pub(crate) struct RegistryInfo {
 unsafe impl BufferImpl for FixedBuf {
     type UserData = RegistryInfo;
 
-    fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Self::UserData) {
+    fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Vec<usize>, Self::UserData) {
         let this = ManuallyDrop::new(self);
         (
             vec![this.iovec.iov_base as _],
             vec![this.iovec.iov_len],
+            vec![this.cap],
             this.registry_info.clone(),
         )
     }
@@ -207,6 +210,7 @@ unsafe impl BufferImpl for FixedBuf {
     unsafe fn from_raw_parts(
         ptr: Vec<*mut u8>,
         len: Vec<usize>,
+        cap: Vec<usize>,
         user_data: Self::UserData,
     ) -> Self {
         let iovec = libc::iovec {
@@ -215,6 +219,7 @@ unsafe impl BufferImpl for FixedBuf {
         };
         FixedBuf {
             iovec,
+            cap: cap[0],
             registry_info: user_data,
         }
     }

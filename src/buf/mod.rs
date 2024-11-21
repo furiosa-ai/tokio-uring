@@ -9,6 +9,7 @@ mod io_buf;
 use std::any::{Any, TypeId};
 use std::fmt::Debug;
 use std::{
+    iter::zip,
     mem::ManuallyDrop,
     ops::{Index, IndexMut},
 };
@@ -47,21 +48,27 @@ pub(crate) fn deref_mut(buf: &mut impl IoBufMut) -> &mut [u8] {
 pub unsafe trait BufferImpl: Any {
     type UserData: Send + Sync + 'static;
 
-    fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Self::UserData);
+    fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Vec<usize>, Self::UserData);
+
     /// # Safety
     /// `from_raw_parts(into_raw_parts(buf))` must be equal to `buf`
-    unsafe fn from_raw_parts(ptr: Vec<*mut u8>, len: Vec<usize>, user_data: Self::UserData)
-        -> Self;
+    unsafe fn from_raw_parts(
+        ptr: Vec<*mut u8>,
+        len: Vec<usize>,
+        cap: Vec<usize>,
+        user_data: Self::UserData,
+    ) -> Self;
 }
 
 #[allow(missing_docs)]
 pub struct Buffer {
-    iovecs: Vec<libc::iovec>,
+    iovec: Vec<libc::iovec>,
+    cap: Vec<usize>,
     user_data: *mut (),
     ty: TypeId,
     // SAFETY: Buffer cannot be used after execute `dtor`
     #[allow(clippy::type_complexity)]
-    dtor: Option<Box<dyn FnOnce(Vec<*mut u8>, Vec<usize>, *mut ())>>,
+    dtor: Option<Box<dyn FnOnce(Vec<*mut u8>, Vec<usize>, Vec<usize>, *mut ())>>,
 }
 
 unsafe impl Send for Buffer {}
@@ -70,7 +77,8 @@ unsafe impl Sync for Buffer {}
 impl Debug for Buffer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Buffer")
-            .field("iovecs", &self.iovecs)
+            .field("iovec", &self.iovec)
+            .field("cap", &self.cap)
             .field("user", &self.user_data)
             .field("ty", &self.ty)
             .finish()
@@ -87,8 +95,8 @@ impl Buffer {
     #[allow(missing_docs)]
     pub fn new<B: BufferImpl>(buf: B) -> Self {
         let ty = buf.type_id();
-        let (ptr, len, user_data) = buf.into_raw_parts();
-        let iovecs = ptr
+        let (ptr, len, cap, user_data) = buf.into_raw_parts();
+        let iovec = ptr
             .into_iter()
             .zip(len)
             .map(|(base, len)| libc::iovec {
@@ -98,12 +106,13 @@ impl Buffer {
             .collect();
         let user_data = Box::into_raw(Box::new(user_data)) as _;
         Self {
-            iovecs,
+            iovec,
+            cap,
             user_data,
             ty,
-            dtor: Some(Box::new(|ptr, len, user_data| unsafe {
+            dtor: Some(Box::new(|ptr, len, cap, user_data| unsafe {
                 let user_data = Box::from_raw(user_data as *mut B::UserData);
-                drop(B::from_raw_parts(ptr, len, *user_data));
+                drop(B::from_raw_parts(ptr, len, cap, *user_data));
             })),
         }
     }
@@ -117,13 +126,15 @@ impl Buffer {
 
         unsafe {
             let this = ManuallyDrop::new(self);
+            let cap = std::ptr::read(&this.cap);
             let user_data = Box::from_raw(this.user_data as *mut B::UserData);
-            let (ptrs, lens) = this
-                .iovecs
+            let (ptrs, len) = this
+                .iovec
                 .iter()
                 .map(|iovec| (iovec.iov_base as *mut u8, iovec.iov_len))
                 .collect();
-            let buf = B::from_raw_parts(ptrs, lens, *user_data);
+
+            let buf = B::from_raw_parts(ptrs, len, cap, *user_data);
             Ok(buf)
         }
     }
@@ -132,7 +143,7 @@ impl Buffer {
 impl Buffer {
     #[allow(missing_docs)]
     pub fn len(&self) -> usize {
-        self.iovecs.len()
+        self.iovec.len()
     }
 
     #[allow(missing_docs)]
@@ -141,8 +152,15 @@ impl Buffer {
     }
 
     #[allow(missing_docs)]
+    pub fn fill(&mut self) {
+        for (iovec, cap) in zip(&mut self.iovec, &self.cap) {
+            iovec.iov_len = *cap;
+        }
+    }
+
+    #[allow(missing_docs)]
     pub fn iter(&self) -> std::slice::Iter<'_, libc::iovec> {
-        self.iovecs.iter()
+        self.iovec.iter()
     }
 
     pub(crate) fn user_data(&self) -> *mut () {
@@ -158,11 +176,13 @@ impl Drop for Buffer {
     fn drop(&mut self) {
         let dtor = self.dtor.take().unwrap();
         let (ptr, len) = self
-            .iovecs
+            .iovec
             .iter()
             .map(|iovec| (iovec.iov_base as *mut u8, iovec.iov_len))
             .collect();
-        dtor(ptr, len, self.user_data);
+
+        let cap = std::mem::take(&mut self.cap);
+        dtor(ptr, len, cap, self.user_data);
     }
 }
 
@@ -170,70 +190,79 @@ impl Index<usize> for Buffer {
     type Output = [u8];
 
     fn index(&self, index: usize) -> &Self::Output {
-        let iovec = &self.iovecs[index];
+        let iovec = &self.iovec[index];
         unsafe { std::slice::from_raw_parts(iovec.iov_base as *const u8, iovec.iov_len) }
     }
 }
 
 impl IndexMut<usize> for Buffer {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-        let iovec = &mut self.iovecs[index];
+        let iovec = &mut self.iovec[index];
         unsafe { std::slice::from_raw_parts_mut(iovec.iov_base as *mut u8, iovec.iov_len) }
     }
 }
 
 unsafe impl IoBuf for Buffer {
     fn stable_ptr(&self) -> *const u8 {
-        if self.iovecs.len() == 1 {
-            self.iovecs[0].iov_base as *const u8
+        if self.iovec.len() == 1 {
+            self.iovec[0].iov_base as *const u8
         } else {
-            self.iovecs.as_ptr() as *const u8
+            self.iovec.as_ptr() as *const u8
         }
     }
 
     fn bytes_init(&self) -> usize {
-        self.iovecs.iter().map(|iovec| iovec.iov_len).sum()
+        self.iovec.iter().map(|iovec| iovec.iov_len).sum()
     }
 
     fn bytes_total(&self) -> usize {
-        IoBuf::bytes_init(self)
+        self.cap.iter().sum()
     }
 }
 
 unsafe impl IoBufMut for Buffer {
     fn stable_mut_ptr(&mut self) -> *mut u8 {
-        if self.iovecs.len() == 1 {
-            self.iovecs[0].iov_base as *mut u8
+        if self.iovec.len() == 1 {
+            self.iovec[0].iov_base as *mut u8
         } else {
-            self.iovecs.as_mut_ptr() as *mut u8
+            self.iovec.as_mut_ptr() as *mut u8
         }
     }
 
-    unsafe fn set_init(&mut self, mut _pos: usize) {
-        // Do nothing. We don't distinguish length and capacity.
+    unsafe fn set_init(&mut self, mut pos: usize) {
+        for (iovec, cap) in zip(&mut self.iovec, &self.cap) {
+            let size = std::cmp::min(*cap, pos);
+            iovec.iov_len = size;
+            pos -= size;
+        }
     }
 }
 
 unsafe impl BufferImpl for Vec<u8> {
-    type UserData = usize;
+    type UserData = ();
 
-    fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Self::UserData) {
+    fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Vec<usize>, Self::UserData) {
         let mut this = ManuallyDrop::new(self);
         let ptr = this.as_mut_ptr() as _;
         let len = this.len();
         let cap = this.capacity();
-        (vec![ptr], vec![len], cap)
+        (vec![ptr], vec![len], vec![cap], ())
     }
 
-    unsafe fn from_raw_parts(ptr: Vec<*mut u8>, len: Vec<usize>, user: Self::UserData) -> Self {
-        Vec::from_raw_parts(ptr[0], len[0], user)
+    unsafe fn from_raw_parts(
+        ptr: Vec<*mut u8>,
+        len: Vec<usize>,
+        cap: Vec<usize>,
+        _user: Self::UserData,
+    ) -> Self {
+        Vec::from_raw_parts(ptr[0], len[0], cap[0])
     }
 }
 
 unsafe impl BufferImpl for Vec<Vec<u8>> {
-    type UserData = Vec<usize>;
+    type UserData = ();
 
-    fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Self::UserData) {
+    fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Vec<usize>, Self::UserData) {
         let mut ptr = Vec::with_capacity(self.len());
         let mut len = Vec::with_capacity(self.len());
         let mut cap = Vec::with_capacity(self.len());
@@ -243,13 +272,18 @@ unsafe impl BufferImpl for Vec<Vec<u8>> {
             len.push(this.len());
             cap.push(this.capacity());
         }
-        (ptr, len, cap)
+        (ptr, len, cap, ())
     }
 
-    unsafe fn from_raw_parts(ptr: Vec<*mut u8>, len: Vec<usize>, user: Self::UserData) -> Self {
+    unsafe fn from_raw_parts(
+        ptr: Vec<*mut u8>,
+        len: Vec<usize>,
+        cap: Vec<usize>,
+        _user: Self::UserData,
+    ) -> Self {
         let mut vec = Vec::with_capacity(ptr.len());
-        for ((p, len), cap) in ptr.into_iter().zip(len).zip(user) {
-            vec.push(Vec::from_raw_parts(p, len, cap));
+        for ((ptr, len), cap) in ptr.into_iter().zip(len).zip(cap) {
+            vec.push(Vec::from_raw_parts(ptr, len, cap));
         }
         vec
     }

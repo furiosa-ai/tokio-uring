@@ -113,6 +113,8 @@ impl Unsubmitted {
         let ptr = buf.stable_mut_ptr();
         let len = buf.bytes_total();
 
+        buf.fill();
+
         let sqe = if buf.len() == 1 {
             // Fixed buffer io not support vectored io
 
