@@ -213,6 +213,7 @@ impl FixedBufPool {
 ///
 /// ```should_panic
 /// use tokio_uring::buf::fixed::pool;
+/// use tokio_uring::Buffer;
 /// use std::iter;
 ///
 /// # #[allow(non_snake_case)]
@@ -223,7 +224,7 @@ impl FixedBufPool {
 /// # let BUF_SIZE = 4096;
 ///
 /// tokio_uring::start(async {
-///     let pool = pool::register(iter::repeat(Vec::with_capacity(BUF_SIZE)).take(NUM_BUFFERS))?;
+///     let pool = pool::register(iter::repeat(Vec::<u8>::with_capacity(BUF_SIZE)).take(NUM_BUFFERS).map(Buffer::from))?;
 ///     // ...
 ///     Ok(())
 /// })
@@ -234,6 +235,7 @@ impl FixedBufPool {
 ///
 /// ```
 /// use tokio_uring::buf::fixed::pool;
+/// use tokio_uring::Buffer;
 /// use std::iter;
 ///
 /// # #[allow(non_snake_case)]
@@ -244,7 +246,7 @@ impl FixedBufPool {
 /// # let BUF_SIZE = 4096;
 ///
 /// tokio_uring::start(async {
-///     let pool = pool::register(iter::repeat_with(|| Vec::with_capacity(BUF_SIZE)).take(NUM_BUFFERS))?;
+///     let pool = pool::register(iter::repeat_with(|| Vec::<u8>::with_capacity(BUF_SIZE)).take(NUM_BUFFERS).map(Buffer::from))?;
 ///     // ...
 ///     Ok(())
 /// })
@@ -256,7 +258,7 @@ impl FixedBufPool {
 /// If a collection of buffers is currently registered in the context
 /// of the `tokio-uring` runtime this call is made in, the function returns
 /// an error.
-pub fn register(bufs: impl Iterator<Item = Vec<u8>>) -> io::Result<FixedBufPool> {
+pub fn register(bufs: impl Iterator<Item = Buffer>) -> io::Result<FixedBufPool> {
     let pool_inner = plumbing::Pool::new(bufs);
     CONTEXT.with(|x| {
         x.handle()

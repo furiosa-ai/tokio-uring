@@ -9,6 +9,7 @@ use tokio_uring::{
         BoundedBuf,
     },
     net::{TcpListener, TcpStream},
+    Buffer,
 }; // BoundedBuf for slice method
 
 // A contrived example, where just two fixed buffers are created.
@@ -37,7 +38,9 @@ async fn accept_loop(listen_addr: SocketAddr) {
     );
 
     // Other iterators may be passed to FixedBufRegistry::new also.
-    let buffers = iter::repeat(vec![0; 4096]).take(POOL_SIZE);
+    let buffers = iter::repeat(vec![0; 4096])
+        .take(POOL_SIZE)
+        .map(Buffer::from);
 
     // Register the buffers with the kernel, asserting the syscall passed.
 

@@ -2,8 +2,10 @@ use tokio::sync::Notify;
 
 use std::cmp;
 use std::collections::HashMap;
-use std::mem::ManuallyDrop;
 use std::sync::Arc;
+
+use crate::buf::IoBuf;
+use crate::Buffer;
 
 // Internal state shared by FixedBufPool and FixedBuf handles.
 pub(crate) struct Pool {
@@ -16,6 +18,8 @@ pub(crate) struct Pool {
     free_buf_head_by_cap: HashMap<usize, u16>,
     // Used to notify tasks pending on `next`
     notify_next_by_cap: HashMap<usize, Arc<Notify>>,
+    // Original buffers
+    _buffers: Vec<Buffer>,
 }
 
 unsafe impl Send for Pool {}
@@ -37,7 +41,7 @@ enum BufState {
 }
 
 impl Pool {
-    pub(crate) fn new(bufs: impl Iterator<Item = Vec<u8>>) -> Self {
+    pub(crate) fn new(bufs: impl Iterator<Item = Buffer>) -> Self {
         // Limit the number of buffers to the maximum allowable number.
         let bufs = bufs.take(cmp::min(libc::UIO_MAXIOV as usize, u16::MAX as usize));
         // Collect into `buffers`, which holds the backing buffers for
@@ -48,20 +52,22 @@ impl Pool {
         let mut iovecs = Vec::with_capacity(buffers.len());
         let mut states = Vec::with_capacity(buffers.len());
         let mut free_buf_head_by_cap = HashMap::new();
-        for (i, buf) in buffers.into_iter().enumerate() {
-            let mut buf = ManuallyDrop::new(buf);
+        for (i, buf) in buffers.iter().enumerate() {
+            let ptr = buf.stable_ptr();
+            let len = buf.bytes_init();
+            let cap = buf.bytes_total();
             let iovec = libc::iovec {
-                iov_base: buf.as_mut_ptr() as _,
-                iov_len: buf.capacity(),
+                iov_base: ptr as _,
+                iov_len: cap,
             };
             iovecs.push(iovec);
 
             // Link the buffer as the head of the free list for its capacity.
             // This constructs the free buffer list to be initially retrieved
             // back to front, which should be of no difference to the user.
-            let next = free_buf_head_by_cap.insert(buf.capacity(), i as u16);
+            let next = free_buf_head_by_cap.insert(cap, i as u16);
             states.push(BufState::Free {
-                init_len: buf.len(),
+                init_len: len,
                 next,
             });
         }
@@ -72,6 +78,7 @@ impl Pool {
             states,
             free_buf_head_by_cap,
             notify_next_by_cap: HashMap::new(),
+            _buffers: buffers,
         }
     }
 
@@ -136,21 +143,11 @@ impl Pool {
 
 impl Drop for Pool {
     fn drop(&mut self) {
-        for (i, state) in self.states.iter().enumerate() {
-            match state {
-                BufState::Free { init_len, .. } => {
-                    // Update buffer initialization.
-                    // The origin Vec<u8>s are dropped here.
-                    let _ = unsafe {
-                        Vec::from_raw_parts(
-                            self.iovecs[i].iov_base as _,
-                            *init_len,
-                            self.iovecs[i].iov_len,
-                        )
-                    };
-                }
-                BufState::CheckedOut => unreachable!("all buffers must be checked in"),
-            }
-        }
+        assert!(
+            self.states
+                .iter()
+                .all(|state| matches!(state, BufState::Free { .. })),
+            "all buffers must be checked in"
+        );
     }
 }

@@ -1,4 +1,6 @@
-use std::{cmp, mem::ManuallyDrop};
+use std::cmp;
+
+use crate::{buf::IoBuf, Buffer};
 
 // Internal state shared by FixedBufRegistry and Buffers.
 pub(crate) struct Registry {
@@ -9,6 +11,8 @@ pub(crate) struct Registry {
     // State information on the buffers. Indices in this array correspond to
     // the indices in the array at iovecs.
     states: Vec<BufState>,
+    // Original buffers
+    _buffers: Vec<Buffer>,
 }
 
 unsafe impl Send for Registry {}
@@ -25,7 +29,7 @@ enum BufState {
 }
 
 impl Registry {
-    pub(crate) fn new(bufs: impl Iterator<Item = Vec<u8>>) -> Self {
+    pub(crate) fn new(bufs: impl Iterator<Item = Buffer>) -> Self {
         // Limit the number of buffers to the maximum allowable number.
         let bufs = bufs.take(cmp::min(libc::UIO_MAXIOV as usize, u16::MAX as usize));
         // Collect into `buffers`, which holds the backing buffers for
@@ -35,21 +39,25 @@ impl Registry {
         let buffers = bufs.collect::<Vec<_>>();
         let mut iovecs = Vec::with_capacity(buffers.len());
         let mut states = Vec::with_capacity(buffers.len());
-        for buf in buffers.into_iter() {
+        for buf in buffers.iter() {
             // Origin buffer will be dropped when Registry is dropped
-            let mut buf = ManuallyDrop::new(buf);
+            let ptr = buf.stable_ptr();
+            let len = buf.bytes_init();
+            let cap = buf.bytes_total();
             let iovec = libc::iovec {
-                iov_base: buf.as_mut_ptr() as _,
-                iov_len: buf.capacity(),
+                iov_base: ptr as _,
+                iov_len: cap,
             };
             iovecs.push(iovec);
-            states.push(BufState::Free {
-                init_len: buf.len(),
-            });
+            states.push(BufState::Free { init_len: len });
         }
         debug_assert_eq!(iovecs.len(), states.len());
 
-        Self { iovecs, states }
+        Self {
+            iovecs,
+            states,
+            _buffers: buffers,
+        }
     }
 
     pub(crate) fn iovecs(&self) -> &[libc::iovec] {
@@ -83,21 +91,11 @@ impl Registry {
 
 impl Drop for Registry {
     fn drop(&mut self) {
-        for (i, state) in self.states.iter().enumerate() {
-            match state {
-                BufState::Free { init_len } => {
-                    // Update buffer initialization.
-                    // The origin Vec<u8>s are dropped here.
-                    let _ = unsafe {
-                        Vec::from_raw_parts(
-                            self.iovecs[i].iov_base as _,
-                            *init_len,
-                            self.iovecs[i].iov_len,
-                        )
-                    };
-                }
-                BufState::CheckedOut => unreachable!("all buffers must be checked in"),
-            }
-        }
+        assert!(
+            self.states
+                .iter()
+                .all(|state| matches!(state, BufState::Free { .. })),
+            "all buffers must be checked in"
+        );
     }
 }

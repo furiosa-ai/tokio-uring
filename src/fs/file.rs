@@ -299,10 +299,11 @@ impl File {
     /// use tokio_uring::fs::File;
     /// use tokio_uring::buf::fixed::registry;
     /// use tokio_uring::buf::BoundedBuf;
+    /// use tokio_uring::Buffer;
     /// use std::iter;
     ///
     /// tokio_uring::start(async {
-    ///     let registry = registry::register(iter::repeat(vec![0; 10]).take(10))?;
+    ///     let registry = registry::register(iter::repeat(vec![0u8; 10]).take(10).map(Buffer::from))?;
     ///
     ///     let f = File::open("foo.txt").await?;
     ///     let buffer = registry.check_out(2).unwrap();
@@ -396,9 +397,10 @@ impl File {
     /// use tokio_uring::fs::File;
     /// use tokio_uring::buf::fixed::registry;
     /// use tokio_uring::buf::BoundedBuf;
+    /// use tokio_uring::Buffer;
     ///
     /// tokio_uring::start(async {
-    ///     let registry = registry::register(vec![b"some bytes".to_vec()].into_iter())?;
+    ///     let registry = registry::register(vec![b"some bytes".to_vec()].into_iter().map(Buffer::from))?;
     ///
     ///     let file = File::create("foo.txt").await?;
     ///
