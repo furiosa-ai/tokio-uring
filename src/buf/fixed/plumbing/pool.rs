@@ -53,6 +53,7 @@ impl Pool {
         let mut states = Vec::with_capacity(buffers.len());
         let mut free_buf_head_by_cap = HashMap::new();
         for (i, buf) in buffers.iter().enumerate() {
+            debug_assert_eq!(buf.len(), 1);
             let ptr = buf.stable_ptr();
             let len = buf.bytes_init();
             let cap = buf.bytes_total();

@@ -40,6 +40,7 @@ impl Registry {
         let mut iovecs = Vec::with_capacity(buffers.len());
         let mut states = Vec::with_capacity(buffers.len());
         for buf in buffers.iter() {
+            debug_assert_eq!(buf.len(), 1);
             // Origin buffer will be dropped when Registry is dropped
             let ptr = buf.stable_ptr();
             let len = buf.bytes_init();
