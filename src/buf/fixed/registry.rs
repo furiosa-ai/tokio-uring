@@ -106,6 +106,7 @@ impl FixedBufRegistry {
 ///
 /// ```should_panic
 /// use tokio_uring::buf::fixed::registry;
+/// use tokio_uring::Buffer;
 /// use std::iter;
 ///
 /// # #[allow(non_snake_case)]
@@ -116,7 +117,7 @@ impl FixedBufRegistry {
 /// # let BUF_SIZE = 4096;
 ///
 /// tokio_uring::start(async {
-///     let registry = registry::register(iter::repeat(Vec::with_capacity(BUF_SIZE)).take(NUM_BUFFERS))?;
+///     let registry = registry::register(iter::repeat(Vec::<u8>::with_capacity(BUF_SIZE)).take(NUM_BUFFERS).map(Buffer::from))?;
 ///     // ...
 ///     Ok(())
 /// })
@@ -127,6 +128,7 @@ impl FixedBufRegistry {
 ///
 /// ```
 /// use tokio_uring::buf::fixed::registry;
+/// use tokio_uring::Buffer;
 /// use std::iter;
 ///
 /// # #[allow(non_snake_case)]
@@ -137,7 +139,7 @@ impl FixedBufRegistry {
 /// # let BUF_SIZE = 4096;
 ///
 /// tokio_uring::start(async {
-///     let registry = registry::register(iter::repeat_with(|| Vec::with_capacity(BUF_SIZE)).take(NUM_BUFFERS))?;
+///     let registry = registry::register(iter::repeat_with(|| Vec::<u8>::with_capacity(BUF_SIZE)).take(NUM_BUFFERS).map(Buffer::from))?;
 ///     // ...
 ///     Ok(())
 /// })
@@ -149,7 +151,7 @@ impl FixedBufRegistry {
 /// If a collection of buffers is currently registered in the context
 /// of the `tokio-uring` runtime this call is made in, the function returns
 /// an error.
-pub fn register(bufs: impl Iterator<Item = Vec<u8>>) -> io::Result<FixedBufRegistry> {
+pub fn register(bufs: impl Iterator<Item = Buffer>) -> io::Result<FixedBufRegistry> {
     let registry_inner = plumbing::Registry::new(bufs);
     CONTEXT.with(|x| {
         x.handle()
