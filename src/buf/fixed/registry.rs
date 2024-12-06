@@ -199,13 +199,12 @@ pub(crate) struct RegistryInfo {
 unsafe impl BufferImpl for FixedBuf {
     type UserData = RegistryInfo;
 
-    fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Vec<usize>, Self::UserData) {
-        let mut this = ManuallyDrop::new(self);
-        let registry_info = this.registry_info.take().unwrap();
+    fn into_raw_parts(mut self) -> (Vec<*mut u8>, Vec<usize>, Vec<usize>, Self::UserData) {
+        let registry_info = self.registry_info.take().unwrap();
         (
-            vec![this.iovec.iov_base as _],
-            vec![this.init_len],
-            vec![this.iovec.iov_len],
+            vec![self.iovec.iov_base as _],
+            vec![self.init_len],
+            vec![self.iovec.iov_len],
             registry_info,
         )
     }
@@ -230,7 +229,9 @@ unsafe impl BufferImpl for FixedBuf {
 
 impl Drop for FixedBuf {
     fn drop(&mut self) {
-        let registry_info = self.registry_info.take().unwrap();
+        let Some(registry_info) = self.registry_info.take() else {
+            return;
+        };
         let mut registry = registry_info.registry.lock().unwrap();
         registry.check_in(registry_info.index as usize, self.init_len);
     }

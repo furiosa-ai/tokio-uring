@@ -308,13 +308,12 @@ pub(crate) struct PoolInfo {
 unsafe impl BufferImpl for FixedBuf {
     type UserData = PoolInfo;
 
-    fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Vec<usize>, Self::UserData) {
-        let mut this = ManuallyDrop::new(self);
-        let pool_info = this.pool_info.take().unwrap();
+    fn into_raw_parts(mut self) -> (Vec<*mut u8>, Vec<usize>, Vec<usize>, Self::UserData) {
+        let pool_info = self.pool_info.take().unwrap();
         (
-            vec![this.iovec.iov_base as _],
-            vec![this.init_len],
-            vec![this.iovec.iov_len],
+            vec![self.iovec.iov_base as _],
+            vec![self.init_len],
+            vec![self.iovec.iov_len],
             pool_info,
         )
     }
@@ -339,7 +338,9 @@ unsafe impl BufferImpl for FixedBuf {
 
 impl Drop for FixedBuf {
     fn drop(&mut self) {
-        let pool_info = self.pool_info.take().unwrap();
+        let Some(pool_info) = self.pool_info.take() else {
+            return;
+        };
         let mut pool = pool_info.pool.lock().unwrap();
         pool.check_in(pool_info.index as usize, self.init_len);
     }
