@@ -68,7 +68,7 @@ impl FixedBufRegistry {
         let buf = FixedBuf {
             iovec,
             init_len,
-            registry_info,
+            registry_info: Some(registry_info),
         };
 
         Some(Buffer::new(buf))
@@ -185,9 +185,9 @@ pub fn unregister() -> io::Result<()> {
 }
 
 pub(crate) struct FixedBuf {
-    pub iovec: libc::iovec,
-    pub init_len: usize,
-    pub registry_info: RegistryInfo,
+    iovec: libc::iovec,
+    init_len: usize,
+    registry_info: Option<RegistryInfo>,
 }
 
 #[derive(Clone)]
@@ -199,13 +199,13 @@ pub(crate) struct RegistryInfo {
 unsafe impl BufferImpl for FixedBuf {
     type UserData = RegistryInfo;
 
-    fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Vec<usize>, Self::UserData) {
-        let this = ManuallyDrop::new(self);
+    fn into_raw_parts(mut self) -> (Vec<*mut u8>, Vec<usize>, Vec<usize>, Self::UserData) {
+        let registry_info = self.registry_info.take().unwrap();
         (
-            vec![this.iovec.iov_base as _],
-            vec![this.init_len],
-            vec![this.iovec.iov_len],
-            this.registry_info.clone(),
+            vec![self.iovec.iov_base as _],
+            vec![self.init_len],
+            vec![self.iovec.iov_len],
+            registry_info,
         )
     }
 
@@ -222,14 +222,17 @@ unsafe impl BufferImpl for FixedBuf {
         FixedBuf {
             iovec,
             init_len: len[0],
-            registry_info: user_data,
+            registry_info: Some(user_data),
         }
     }
 }
 
 impl Drop for FixedBuf {
     fn drop(&mut self) {
-        let mut registry = self.registry_info.registry.lock().unwrap();
-        registry.check_in(self.registry_info.index as usize, self.init_len);
+        let Some(registry_info) = self.registry_info.take() else {
+            return;
+        };
+        let mut registry = registry_info.registry.lock().unwrap();
+        registry.check_in(registry_info.index as usize, self.init_len);
     }
 }

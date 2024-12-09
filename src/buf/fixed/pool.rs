@@ -126,7 +126,7 @@ impl FixedBufPool {
         let buf = FixedBuf {
             iovec,
             init_len,
-            pool_info,
+            pool_info: Some(pool_info),
         };
 
         Some(Buffer::new(buf))
@@ -296,7 +296,7 @@ pub fn unregister() -> io::Result<()> {
 pub(crate) struct FixedBuf {
     iovec: libc::iovec,
     init_len: usize,
-    pool_info: PoolInfo,
+    pool_info: Option<PoolInfo>,
 }
 
 #[derive(Clone)]
@@ -308,13 +308,13 @@ pub(crate) struct PoolInfo {
 unsafe impl BufferImpl for FixedBuf {
     type UserData = PoolInfo;
 
-    fn into_raw_parts(self) -> (Vec<*mut u8>, Vec<usize>, Vec<usize>, Self::UserData) {
-        let this = ManuallyDrop::new(self);
+    fn into_raw_parts(mut self) -> (Vec<*mut u8>, Vec<usize>, Vec<usize>, Self::UserData) {
+        let pool_info = self.pool_info.take().unwrap();
         (
-            vec![this.iovec.iov_base as _],
-            vec![this.init_len],
-            vec![this.iovec.iov_len],
-            this.pool_info.clone(),
+            vec![self.iovec.iov_base as _],
+            vec![self.init_len],
+            vec![self.iovec.iov_len],
+            pool_info,
         )
     }
 
@@ -331,14 +331,17 @@ unsafe impl BufferImpl for FixedBuf {
         FixedBuf {
             iovec,
             init_len: len[0],
-            pool_info: user_data,
+            pool_info: Some(user_data),
         }
     }
 }
 
 impl Drop for FixedBuf {
     fn drop(&mut self) {
-        let mut pool = self.pool_info.pool.lock().unwrap();
-        pool.check_in(self.pool_info.index as usize, self.init_len);
+        let Some(pool_info) = self.pool_info.take() else {
+            return;
+        };
+        let mut pool = pool_info.pool.lock().unwrap();
+        pool.check_in(pool_info.index as usize, self.init_len);
     }
 }
