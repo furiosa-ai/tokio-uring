@@ -18,7 +18,6 @@ use tokio::pin;
 use tokio::sync::Notify;
 
 use std::io;
-use std::mem::ManuallyDrop;
 use std::sync::Arc;
 use std::sync::Mutex;
 
