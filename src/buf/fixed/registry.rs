@@ -12,7 +12,6 @@ use crate::buf::BufferImpl;
 use crate::runtime::CONTEXT;
 use crate::Buffer;
 use std::io;
-use std::mem::ManuallyDrop;
 use std::sync::{Arc, Mutex};
 
 /// An indexed collection of I/O buffers pre-registered with the kernel.
