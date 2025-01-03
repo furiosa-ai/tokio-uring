@@ -10,7 +10,6 @@ use std::fmt;
 use std::io;
 use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd, RawFd};
 use std::path::Path;
-use std::pin::Pin;
 
 /// A reference to an open file on the filesystem.
 ///
@@ -624,8 +623,8 @@ impl File {
     }
 
     #[allow(missing_docs)]
-    pub fn cmd<T>(&self, op: u32, cmd: [u8; 16], data: Pin<Box<T>>) -> UnsubmittedCmd<T> {
-        UnsubmittedCmd::cmd(&self.fd, op, cmd, data)
+    pub fn cmd(&self, op: u32, cmd: [u8; 16], buf: Buffer) -> UnsubmittedCmd {
+        UnsubmittedCmd::cmd(&self.fd, op, cmd, buf)
     }
 }
 

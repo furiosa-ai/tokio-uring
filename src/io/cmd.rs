@@ -1,23 +1,18 @@
-use std::marker::PhantomData;
-use std::pin::Pin;
-
 use io_uring::cqueue::Entry;
 use io_uring::{opcode, types};
 
 use crate::io::SharedFd;
 
-use crate::{OneshotOutputTransform, UnsubmittedOneshot};
+use crate::{Buffer, OneshotOutputTransform, UnsubmittedOneshot};
 
 /// An unsubmitted read operation.
-pub type UnsubmittedCmd<T> = UnsubmittedOneshot<CmdData<T>, CmdTransform<T>>;
+pub type UnsubmittedCmd = UnsubmittedOneshot<CmdData, CmdTransform>;
 
-impl<T> UnsubmittedCmd<T> {
-    pub(crate) fn cmd(fd: &SharedFd, op: u32, cmd: [u8; 16], data: Pin<Box<T>>) -> Self {
+impl UnsubmittedCmd {
+    pub(crate) fn cmd(fd: &SharedFd, op: u32, cmd: [u8; 16], buf: Buffer) -> Self {
         Self::new(
-            CmdData { data },
-            CmdTransform {
-                _phantom: PhantomData,
-            },
+            CmdData { buf },
+            CmdTransform {},
             opcode::UringCmd16::new(types::Fd(fd.raw_fd()), op)
                 .cmd(cmd)
                 .build(),
@@ -26,20 +21,18 @@ impl<T> UnsubmittedCmd<T> {
 }
 
 #[allow(missing_docs)]
-pub struct CmdData<T> {
-    data: Pin<Box<T>>,
+pub struct CmdData {
+    buf: Buffer,
 }
 
 #[allow(missing_docs)]
-pub struct CmdTransform<B> {
-    _phantom: PhantomData<B>,
-}
+pub struct CmdTransform {}
 
-impl<T> OneshotOutputTransform for CmdTransform<T> {
-    type Output = (i32, Pin<Box<T>>);
-    type StoredData = CmdData<T>;
+impl OneshotOutputTransform for CmdTransform {
+    type Output = (i32, Buffer);
+    type StoredData = CmdData;
 
     fn transform_oneshot_output(self, data: Self::StoredData, cqe: Entry) -> Self::Output {
-        (cqe.result(), data.data)
+        (cqe.result(), data.buf)
     }
 }
