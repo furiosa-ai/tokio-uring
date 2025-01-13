@@ -47,3 +47,5 @@ pub(crate) use util::cstr;
 pub(crate) mod read_write;
 
 mod write_fixed;
+
+pub(crate) mod cmd;
