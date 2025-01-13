@@ -5,7 +5,7 @@ use crate::io::SharedFd;
 
 use crate::{Buffer, OneshotOutputTransform, UnsubmittedOneshot};
 
-/// An unsubmitted read operation.
+/// An unsubmitted cmd operation.
 pub type UnsubmittedCmd = UnsubmittedOneshot<CmdData, CmdTransform>;
 
 impl UnsubmittedCmd {
