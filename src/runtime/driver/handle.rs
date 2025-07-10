@@ -64,6 +64,20 @@ impl Handle {
         self.inner.borrow_mut().unregister_files()
     }
 
+    pub fn register_iowq_max_workers(
+        &self,
+        bounded: u32,
+        unbounded: u32,
+    ) -> io::Result<(u32, u32)> {
+        self.inner
+            .borrow_mut()
+            .register_iowq_max_workers(bounded, unbounded)
+    }
+
+    pub fn register_iowq_aff(&self, cpu_set: &libc::cpu_set_t) -> io::Result<()> {
+        self.inner.borrow_mut().register_iowq_aff(cpu_set)
+    }
+
     pub(crate) fn submit_op_2(&self, sqe: squeue::Entry) -> usize {
         self.inner.borrow_mut().submit_op_2(sqe)
     }

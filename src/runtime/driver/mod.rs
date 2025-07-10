@@ -108,6 +108,23 @@ impl Driver {
         Ok(())
     }
 
+    pub(crate) fn register_iowq_max_workers(
+        &mut self,
+        bounded: u32,
+        unbounded: u32,
+    ) -> io::Result<(u32, u32)> {
+        let mut args = [bounded, unbounded];
+        self.uring
+            .submitter()
+            .register_iowq_max_workers(&mut args)?;
+        Ok((args[0], args[1]))
+    }
+
+    pub(crate) fn register_iowq_aff(&mut self, cpu_set: &libc::cpu_set_t) -> io::Result<()> {
+        self.uring.submitter().register_iowq_aff(cpu_set)?;
+        Ok(())
+    }
+
     pub(crate) fn submit_op_2(&mut self, sqe: squeue::Entry) -> usize {
         let index = self.ops.insert();
 
