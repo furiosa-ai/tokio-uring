@@ -13,6 +13,7 @@
 //! keep the driver alive for it's duration.
 
 use io_uring::{cqueue, squeue};
+use smallvec::SmallVec;
 use std::cell::RefCell;
 use std::io;
 use std::ops::Deref;
@@ -68,7 +69,7 @@ impl Handle {
         self.inner.borrow_mut().submit_op_2(sqe)
     }
 
-    pub fn submit_ops(&self, sqes: impl Iterator<Item = squeue::Entry>) -> Vec<usize> {
+    pub fn submit_ops(&self, sqes: impl Iterator<Item = squeue::Entry>) -> SmallVec<[usize; 16]> {
         self.inner.borrow_mut().submit_ops(sqes)
     }
 

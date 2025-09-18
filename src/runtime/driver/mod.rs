@@ -3,6 +3,7 @@ use crate::runtime::driver::op::{Completable, Lifecycle, MultiCQEFuture, Op, Upd
 use io_uring::opcode::AsyncCancel;
 use io_uring::{cqueue, squeue, IoUring};
 use slab::Slab;
+use smallvec::SmallVec;
 
 use std::os::unix::io::{AsRawFd, RawFd};
 
@@ -123,9 +124,12 @@ impl Driver {
         index
     }
 
-    pub(crate) fn submit_ops(&mut self, sqes: impl Iterator<Item = squeue::Entry>) -> Vec<usize> {
-        let mut indices = Vec::new();
-        let mut entries: Vec<squeue::Entry> = Vec::new();
+    pub(crate) fn submit_ops(
+        &mut self,
+        sqes: impl Iterator<Item = squeue::Entry>,
+    ) -> SmallVec<[usize; 16]> {
+        let mut indices = SmallVec::new();
+        let mut entries: SmallVec<[squeue::Entry; 16]> = SmallVec::new();
         for sqe in sqes {
             let index = self.ops.insert();
             indices.push(index);
