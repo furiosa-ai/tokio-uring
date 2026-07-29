@@ -128,8 +128,8 @@ impl Buffer {
             let this = ManuallyDrop::new(self);
             let cap = std::ptr::read(&this.cap);
             let user_data = Box::from_raw(this.user_data as *mut B::UserData);
-            let (ptrs, len) = this
-                .iovec
+            let iovec = std::ptr::read(&this.iovec);
+            let (ptrs, len) = iovec
                 .into_iter()
                 .map(|iovec| (iovec.iov_base as *mut u8, iovec.iov_len))
                 .collect();
