@@ -130,7 +130,7 @@ impl Buffer {
             let user_data = Box::from_raw(this.user_data as *mut B::UserData);
             let (ptrs, len) = this
                 .iovec
-                .iter()
+                .into_iter()
                 .map(|iovec| (iovec.iov_base as *mut u8, iovec.iov_len))
                 .collect();
 
